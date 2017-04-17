@@ -1,0 +1,1 @@
+Fuera de Visual Studio, agregar curand.lib o lo que corresponda (probablemente -lcurand) a las dependencias
