@@ -4,7 +4,7 @@
 
 #include <stdio.h>
 
-#define MAX_THREADS_PER_BLOCK 1024
+#include "notbitwise.cuh"
 
 // Kernel invocation: mutation <<<N_BLOCK,BLOCK_LENGTH>>> (pgpu,randomPM,randomPoint,CHROM_LEN,PROB_MUT);
 // N_BLOCK: number of blocks, such that N_BLOCK * BLOCK_LENGTH = POP_SIZE.

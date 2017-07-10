@@ -7,7 +7,6 @@
 #include <stdio.h>
 #include "notbitwise.cuh"
 
-#define MAX_THREADS_PER_BLOCK 1024
 
 
 static const char *curandGetErrorString(curandStatus_t error)
