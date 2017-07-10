@@ -80,7 +80,28 @@ struct ErrorInfo {
 	}
 };
 
-__global__ void sumar(int* dev_rnd, float* dev_output)
+template<typename T>
+__global__ void sumar(T* dev_rnd, float* dev_output,unsigned int len)
+{
+	__shared__ float intermedio[MAX_THREADS_PER_BLOCK];
+	unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
+	unsigned int tid = threadIdx.x;
+	intermedio[threadIdx.x] = idx < len ?  dev_rnd[idx] : 0;
+	__syncthreads();
+	for (unsigned int s = blockDim.x / 2; s != 0; s >>= 1) {
+		if (tid < s) {
+			intermedio[tid] += intermedio[tid + s];
+		}
+		__syncthreads();
+	}
+	__syncthreads();
+	if (threadIdx.x == 0) {
+		dev_output[blockIdx.x] = intermedio[0];
+	}
+}
+
+// sumar mas optimizado pero mas rigido
+__global__ void sumar2(float* dev_rnd, float* dev_output)
 {
 	extern __shared__ float intermedio[];
 	unsigned int idx = blockIdx.x * blockDim.x * 2 + threadIdx.x;
@@ -99,16 +120,16 @@ __global__ void sumar(int* dev_rnd, float* dev_output)
 	}
 }
 
-__global__ void sumar(float* dev_rnd, float* dev_output)
+__global__ void minimo(int* dev_rnd, int* dev_output,unsigned int len)
 {
-	extern __shared__ float intermedio[];
-	unsigned int idx = blockIdx.x * blockDim.x * 2 + threadIdx.x;
+	__shared__ int intermedio[MAX_THREADS_PER_BLOCK];
+	unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
 	unsigned int tid = threadIdx.x;
-	intermedio[threadIdx.x] = dev_rnd[idx] + dev_rnd[idx + blockDim.x];
+	intermedio[threadIdx.x] = idx < len ? dev_rnd[idx] : dev_rnd[0];
 	__syncthreads();
 	for (unsigned int s = blockDim.x / 2; s != 0; s >>= 1) {
 		if (tid < s) {
-			intermedio[tid] += intermedio[tid + s];
+			intermedio[tid] = min(intermedio[tid], intermedio[tid + s]);
 		}
 		__syncthreads();
 	}
@@ -118,41 +139,22 @@ __global__ void sumar(float* dev_rnd, float* dev_output)
 	}
 }
 
-__global__ void minimo(int* dev_rnd, int* dev_output)
+__global__ void maximo(int* dev_rnd, int* dev_output, unsigned int len)
 {
-	extern __shared__ int intermedio2[];
-	unsigned int idx = blockIdx.x * blockDim.x * 2 + threadIdx.x;
+	__shared__ int intermedio[MAX_THREADS_PER_BLOCK];
+	unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
 	unsigned int tid = threadIdx.x;
-	intermedio2[threadIdx.x] = min(dev_rnd[idx], dev_rnd[idx + blockDim.x]);
+	intermedio[threadIdx.x] = idx < len ? dev_rnd[idx] : dev_rnd[0];
 	__syncthreads();
 	for (unsigned int s = blockDim.x / 2; s != 0; s >>= 1) {
 		if (tid < s) {
-			intermedio2[tid] = min(intermedio2[tid], intermedio2[tid + s]);
+			intermedio[tid] = max(intermedio[tid], intermedio[tid + s]);
 		}
 		__syncthreads();
 	}
 	__syncthreads();
 	if (threadIdx.x == 0) {
-		dev_output[blockIdx.x] = intermedio2[0];
-	}
-}
-
-__global__ void maximo(int* dev_rnd, int* dev_output)
-{
-	extern __shared__ int intermedio2[];
-	unsigned int idx = blockIdx.x * blockDim.x * 2 + threadIdx.x;
-	unsigned int tid = threadIdx.x;
-	intermedio2[threadIdx.x] = max(dev_rnd[idx], dev_rnd[idx + blockDim.x]);
-	__syncthreads();
-	for (unsigned int s = blockDim.x / 2; s != 0; s >>= 1) {
-		if (tid < s) {
-			intermedio2[tid] = max(intermedio2[tid], intermedio2[tid + s]);
-		}
-		__syncthreads();
-	}
-	__syncthreads();
-	if (threadIdx.x == 0) {
-		dev_output[blockIdx.x] = intermedio2[0];
+		dev_output[blockIdx.x] = intermedio[0];
 	}
 }
 
@@ -189,12 +191,12 @@ ErrorInfo makeRandomIntegers(curandGenerator_t& generator, int* indices, unsigne
 
 }
 
-curandStatus_t initGenerator(curandGenerator_t& generator) {
+curandStatus_t initGenerator(curandGenerator_t& generator ,unsigned long long seed) {
 	curandStatus_t s =  curandCreateGenerator(&generator, CURAND_RNG_PSEUDO_PHILOX4_32_10);
 	if (s != CURAND_STATUS_SUCCESS) {
 		return s; 
 	}
-	s = curandSetPseudoRandomGeneratorSeed(generator, clock());
+	s = curandSetPseudoRandomGeneratorSeed(generator,seed);
 	return s;
 }
 
@@ -269,12 +271,12 @@ cudaError_t InitWin(int** dev_win, size_t POP_SIZE) {
 }
 
 ErrorInfo evaluate(bool* pop, size_t POP_SIZE, int length,int* dev_fit) {
-	//int *host_fit;
+
 	float avgFit;
 	int minFit, maxFit;
 	ErrorInfo status;
 
-	//status.cuda = cudaMallocHost((void**)&host_fit, sizeof(int) * POP_SIZE); // para calcular max,min,avg
+
 
 	fitness <<< POP_SIZE, MAX_THREADS_PER_BLOCK >>> (pop, dev_fit, length);
 	status.cuda = cudaGetLastError();
@@ -283,43 +285,47 @@ ErrorInfo evaluate(bool* pop, size_t POP_SIZE, int length,int* dev_fit) {
 	status.cuda = cudaDeviceSynchronize();
 	if (status.failed()) return status;
 
-	// reporting
-	/*status.cuda = cudaMemcpy(host_fit, dev_fit, POP_SIZE * sizeof(int), cudaMemcpyDeviceToHost);
-	if (status.failed()) return status;*/
-	
+
 	int* out1;
 	float* out2;
 	
-
-	int blockSize = 256;
-	int nroBlocks = POP_SIZE / (2 * blockSize);
+	int nroBlocks = (POP_SIZE  + MAX_THREADS_PER_BLOCK - 1) / (MAX_THREADS_PER_BLOCK);
 	cudaMalloc(&out1, nroBlocks * sizeof(int));
 	cudaMalloc(&out2, nroBlocks * sizeof(float));
-	minimo << <nroBlocks,blockSize, blockSize * sizeof(float) >> >(dev_fit, out1);
-	minimo << <1, nroBlocks / 2, (nroBlocks / 2) * sizeof(float) >> >(out1, out1);
+	//minimo << <nroBlocks, MAX_THREADS_PER_BLOCK, MAX_THREADS_PER_BLOCK * sizeof(float) >> >(dev_fit, out1);
+	minimo << <nroBlocks, MAX_THREADS_PER_BLOCK >> >(dev_fit, out1,POP_SIZE);
+	minimo << <1, MAX_THREADS_PER_BLOCK >> >(out1, out1, nroBlocks);
 	cudaMemcpy(&minFit, out1, sizeof(int), cudaMemcpyDeviceToHost);
 
 
-	maximo << <nroBlocks, blockSize, blockSize * sizeof(float) >> >(dev_fit, out1);
-	maximo << <1, nroBlocks / 2, (nroBlocks / 2) * sizeof(float) >> >(out1, out1);
+	maximo << <nroBlocks, MAX_THREADS_PER_BLOCK >> >(dev_fit, out1, POP_SIZE);
+	maximo << <1, MAX_THREADS_PER_BLOCK >> >(out1, out1, nroBlocks);
 	cudaMemcpy(&maxFit, out1, sizeof(int), cudaMemcpyDeviceToHost);
 
-	sumar << <nroBlocks, blockSize, blockSize * sizeof(float) >> >(dev_fit, out2);
-	sumar << <1, nroBlocks / 2, (nroBlocks / 2) * sizeof(float) >> >(out2, out2);
+	sumar << <nroBlocks, MAX_THREADS_PER_BLOCK >> >(dev_fit, out2, POP_SIZE);
+	sumar << <1, MAX_THREADS_PER_BLOCK >> >(out2, out2, nroBlocks);
 	cudaMemcpy(&avgFit, out2, sizeof(float), cudaMemcpyDeviceToHost);
 
-	/*avgFit = maxFit = minFit  = host_fit[0];
+	/*
+	int *host_fit;
+	status.cuda = cudaMallocHost((void**)&host_fit, sizeof(int) * POP_SIZE); // para calcular max,min,avg
+	status.cuda = cudaMemcpy(host_fit, dev_fit, POP_SIZE * sizeof(int), cudaMemcpyDeviceToHost);
+	if (status.failed()) return status;
+
+	avgFit = maxFit = minFit  = host_fit[0];
 	for (size_t i = 1; i < POP_SIZE; i++) {
 		avgFit += host_fit[i];
 		maxFit = host_fit[i] > maxFit ? host_fit[i] : maxFit;
 		minFit = host_fit[i] < minFit ? host_fit[i] : minFit;
-	}*/
+	}
+	//cudaFreeHost(host_fit);
+	*/
 	cudaFree(out1);
 	cudaFree(out2);
 
 	avgFit = (avgFit / POP_SIZE) / length;
 	printf("Min: %f, Max: %f, Avg: %f\n", minFit / (double)length,maxFit / (double) length, avgFit);
-	//cudaFreeHost(host_fit);
+	
 	return status;
 }
 
@@ -373,7 +379,7 @@ ErrorInfo GA(size_t POP_SIZE,int len,int iters,bool dpx_cross,float crossProb,fl
 	status = initProbs(&probs, &points, POP_SIZE);
 
 	curandGenerator_t generator;
-	status.curand = initGenerator(generator);
+	status.curand = initGenerator(generator,clock());
 	if (status.failed()) return status;
 
 
