@@ -80,7 +80,7 @@ struct ErrorInfo {
 	}
 };
 
-__global__ void reduction(float* dev_rnd, float* dev_output)
+__global__ void sumar(int* dev_rnd, float* dev_output)
 {
 	extern __shared__ float intermedio[];
 	unsigned int idx = blockIdx.x * blockDim.x * 2 + threadIdx.x;
@@ -97,9 +97,66 @@ __global__ void reduction(float* dev_rnd, float* dev_output)
 	if (threadIdx.x == 0) {
 		dev_output[blockIdx.x] = intermedio[0];
 	}
-
-
 }
+
+__global__ void sumar(float* dev_rnd, float* dev_output)
+{
+	extern __shared__ float intermedio[];
+	unsigned int idx = blockIdx.x * blockDim.x * 2 + threadIdx.x;
+	unsigned int tid = threadIdx.x;
+	intermedio[threadIdx.x] = dev_rnd[idx] + dev_rnd[idx + blockDim.x];
+	__syncthreads();
+	for (unsigned int s = blockDim.x / 2; s != 0; s >>= 1) {
+		if (tid < s) {
+			intermedio[tid] += intermedio[tid + s];
+		}
+		__syncthreads();
+	}
+	__syncthreads();
+	if (threadIdx.x == 0) {
+		dev_output[blockIdx.x] = intermedio[0];
+	}
+}
+
+__global__ void minimo(int* dev_rnd, int* dev_output)
+{
+	extern __shared__ int intermedio2[];
+	unsigned int idx = blockIdx.x * blockDim.x * 2 + threadIdx.x;
+	unsigned int tid = threadIdx.x;
+	intermedio2[threadIdx.x] = min(dev_rnd[idx], dev_rnd[idx + blockDim.x]);
+	__syncthreads();
+	for (unsigned int s = blockDim.x / 2; s != 0; s >>= 1) {
+		if (tid < s) {
+			intermedio2[tid] = min(intermedio2[tid], intermedio2[tid + s]);
+		}
+		__syncthreads();
+	}
+	__syncthreads();
+	if (threadIdx.x == 0) {
+		dev_output[blockIdx.x] = intermedio2[0];
+	}
+}
+
+__global__ void maximo(int* dev_rnd, int* dev_output)
+{
+	extern __shared__ int intermedio2[];
+	unsigned int idx = blockIdx.x * blockDim.x * 2 + threadIdx.x;
+	unsigned int tid = threadIdx.x;
+	intermedio2[threadIdx.x] = max(dev_rnd[idx], dev_rnd[idx + blockDim.x]);
+	__syncthreads();
+	for (unsigned int s = blockDim.x / 2; s != 0; s >>= 1) {
+		if (tid < s) {
+			intermedio2[tid] = max(intermedio2[tid], intermedio2[tid + s]);
+		}
+		__syncthreads();
+	}
+	__syncthreads();
+	if (threadIdx.x == 0) {
+		dev_output[blockIdx.x] = intermedio2[0];
+	}
+}
+
+
 
 __global__ void scaleRandom(float* floatRnd, int* intRnd, size_t N, unsigned int scale) {
 	unsigned int pos = blockIdx.x * blockDim.x + threadIdx.x;
@@ -212,16 +269,12 @@ cudaError_t InitWin(int** dev_win, size_t POP_SIZE) {
 }
 
 ErrorInfo evaluate(bool* pop, size_t POP_SIZE, int length,int* dev_fit) {
-	int *host_fit;
-	double avgFit;
+	//int *host_fit;
+	float avgFit;
 	int minFit, maxFit;
 	ErrorInfo status;
-	/*status.cuda = cudaMalloc(&dev_fit, sizeof(int) * POP_SIZE);
-	if (status.failed()) return status;*/
-	//status.cuda = cudaMallocHost((void**)&host_fit, sizeof(int) * POP_SIZE);
-	if (status.failed()) return status;
-	status.cuda = cudaDeviceSynchronize();
-	if (status.failed()) return status;
+
+	//status.cuda = cudaMallocHost((void**)&host_fit, sizeof(int) * POP_SIZE); // para calcular max,min,avg
 
 	fitness <<< POP_SIZE, MAX_THREADS_PER_BLOCK >>> (pop, dev_fit, length);
 	status.cuda = cudaGetLastError();
@@ -230,18 +283,42 @@ ErrorInfo evaluate(bool* pop, size_t POP_SIZE, int length,int* dev_fit) {
 	status.cuda = cudaDeviceSynchronize();
 	if (status.failed()) return status;
 
+	// reporting
 	/*status.cuda = cudaMemcpy(host_fit, dev_fit, POP_SIZE * sizeof(int), cudaMemcpyDeviceToHost);
-	if (status.failed()) return status;
+	if (status.failed()) return status;*/
+	
+	int* out1;
+	float* out2;
+	
 
-	avgFit = maxFit = minFit  = host_fit[0];
+	int blockSize = 256;
+	int nroBlocks = POP_SIZE / (2 * blockSize);
+	cudaMalloc(&out1, nroBlocks * sizeof(int));
+	cudaMalloc(&out2, nroBlocks * sizeof(float));
+	minimo << <nroBlocks,blockSize, blockSize * sizeof(float) >> >(dev_fit, out1);
+	minimo << <1, nroBlocks / 2, (nroBlocks / 2) * sizeof(float) >> >(out1, out1);
+	cudaMemcpy(&minFit, out1, sizeof(int), cudaMemcpyDeviceToHost);
+
+
+	maximo << <nroBlocks, blockSize, blockSize * sizeof(float) >> >(dev_fit, out1);
+	maximo << <1, nroBlocks / 2, (nroBlocks / 2) * sizeof(float) >> >(out1, out1);
+	cudaMemcpy(&maxFit, out1, sizeof(int), cudaMemcpyDeviceToHost);
+
+	sumar << <nroBlocks, blockSize, blockSize * sizeof(float) >> >(dev_fit, out2);
+	sumar << <1, nroBlocks / 2, (nroBlocks / 2) * sizeof(float) >> >(out2, out2);
+	cudaMemcpy(&avgFit, out2, sizeof(float), cudaMemcpyDeviceToHost);
+
+	/*avgFit = maxFit = minFit  = host_fit[0];
 	for (size_t i = 1; i < POP_SIZE; i++) {
 		avgFit += host_fit[i];
 		maxFit = host_fit[i] > maxFit ? host_fit[i] : maxFit;
 		minFit = host_fit[i] < minFit ? host_fit[i] : minFit;
-	}
-	avgFit = (avgFit / POP_SIZE) / length;*/
-	//printf("Min: %f, Max: %f, Avg: %f\n", minFit / (double)length,maxFit / (double) length, avgFit);
-	//cudaFree(dev_fit);
+	}*/
+	cudaFree(out1);
+	cudaFree(out2);
+
+	avgFit = (avgFit / POP_SIZE) / length;
+	printf("Min: %f, Max: %f, Avg: %f\n", minFit / (double)length,maxFit / (double) length, avgFit);
 	//cudaFreeHost(host_fit);
 	return status;
 }
@@ -307,7 +384,7 @@ ErrorInfo GA(size_t POP_SIZE,int len,int iters,bool dpx_cross,float crossProb,fl
 		fprintf(stderr, "generatePOP failed!");
 		return status;
 	}
-	//printf("gen %d: ", 0);
+	printf("gen %d: ", 0);
 	status = evaluate(pop, POP_SIZE, len,fit);
 
 	for (int gen = 1; gen <= iters; gen++) { // while not optimalSolutionFound
@@ -349,7 +426,7 @@ ErrorInfo GA(size_t POP_SIZE,int len,int iters,bool dpx_cross,float crossProb,fl
 		tmp = pop;
 		pop = npop;
 		npop = tmp;
-		//printf("gen %d: ", gen);
+		printf("gen %d: ", gen);
 		status = evaluate(pop, POP_SIZE, len, fit);
 	}
 	return status;
@@ -369,11 +446,12 @@ int main()
 		fprintf(stderr, "cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?");
 	}
 
-
+	// TODO: arreglar para POP_SIZE no multiplo de MAX_THREADS
 	unsigned int POP_SIZE = 2048 ;
 	int len = 10000;
+	int iters = 2000; 
 	
-	GA(POP_SIZE, len, 1000, false, 0.9, 0.1);
+	GA(POP_SIZE, len, iters, false, 0.9, 0.1);
 
 
 	// cudaDeviceReset must be called before exiting in order for profiling and
