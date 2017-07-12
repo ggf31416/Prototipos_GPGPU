@@ -3,11 +3,15 @@
 #include <device_functions.h>
 #include "device_launch_parameters.h"
 #include "curand.h"
+#include "curand_kernel.h"
 #include <ctime>
 #include <stdio.h>
 #include "notbitwise.cuh"
+#include "stdint.h"
 
-
+#define SALIDA 1
+#define SALIDA_STEP 50
+#define INIT_THREADS 128
 
 static const char *curandGetErrorString(curandStatus_t error)
 {
@@ -77,6 +81,12 @@ struct ErrorInfo {
 				return true;
 			}
 	}
+};
+
+struct EvalInfo {
+	double min;
+	double max;
+	double avg;
 };
 
 template<typename T>
@@ -269,7 +279,8 @@ cudaError_t InitWin(int** dev_win, size_t POP_SIZE) {
 	return cudaMalloc(dev_win, sizeof(int) * POP_SIZE );
 }
 
-ErrorInfo evaluate(bool* pop, size_t POP_SIZE, int length,int* dev_fit) {
+
+ErrorInfo evaluate(bool* pop, size_t POP_SIZE, int length,int* dev_fit,EvalInfo& eval) {
 
 	float avgFit;
 	int minFit, maxFit;
@@ -323,18 +334,78 @@ ErrorInfo evaluate(bool* pop, size_t POP_SIZE, int length,int* dev_fit) {
 	cudaFree(out2);
 
 	avgFit = (avgFit / POP_SIZE) / length;
-	printf("Min: %f, Max: %f, Avg: %f\n", minFit / (double)length,maxFit / (double) length, avgFit);
+	eval.min = minFit / (double)length;
+	eval.max = maxFit / (double)length;
+	eval.avg = avgFit;
+	//if (SALIDA) printf("Min: %f, Max: %f, Avg: %f\n", minFit / (double)length,maxFit / (double) length, avgFit);
 	
+	return status;
+}
+
+
+// Thamas Wang
+// http://www.burtleburtle.net/bob/hash/integer.html
+uint64_t hash64shift(uint64_t key)
+{
+	key = (~key) + (key << 21); // key = (key << 21) - key - 1;
+	key = key ^ (key >>  24);
+	key = (key + (key << 3)) + (key << 8); // key * 265
+	key = key ^ (key >>  14);
+	key = (key + (key << 2)) + (key << 4); // key * 21
+	key = key ^ (key >>  28);
+	key = key + (key << 31);
+	return key;
+}
+
+__global__ void initPop_device(bool *pop, unsigned int length,unsigned long long seed) {
+	unsigned int thIdx = blockIdx.x * blockDim.x + threadIdx.x;
+	curandStatePhilox4_32_10_t rndState;
+	curand_init(seed + thIdx, 0ull, 0ull, &rndState);
+	for (unsigned int i = threadIdx.x; i < length; i = i + INIT_THREADS) {
+		unsigned int pos = blockIdx.x * length + i;
+		pop[pos] = (curand_uniform(&rndState) <= 0.5);
+	}
+}
+
+__global__ void initPop_device32(bool *pop, unsigned int length, unsigned long long seed) {
+	unsigned int thIdx = blockIdx.x * blockDim.x + threadIdx.x;
+	curandStatePhilox4_32_10_t rndState;
+	curand_init(seed + thIdx, 0ull, 0ull, &rndState);
+	for (unsigned int i = threadIdx.x; i < length; ) {
+		uint32_t rnd = curand(&rndState);
+		for (uint32_t j = 0; j < 32 & i < length; j++, i = i + INIT_THREADS) {
+			unsigned int pos = blockIdx.x * length + i;
+			pop[pos] = (rnd & (1 << j)) != 0;
+		}
+
+	}
+}
+
+ErrorInfo generatePOP_device(unsigned long seed, size_t POP_SIZE, int len, bool** pop, bool** npop) {
+	ErrorInfo status;
+	size_t N = POP_SIZE * len;
+	status.cuda = cudaMalloc(pop, N * sizeof(bool));
+	if (status.failed()) return status;
+	status.cuda = cudaMalloc(npop, N * sizeof(bool));
+	if (status.failed()) return status;
+
+	initPop_device32 << < POP_SIZE, INIT_THREADS >> >( *pop, len,seed);
+	status.cuda = cudaGetLastError();
+	if (status.failed()) return status;
+
+	status.cuda = cudaDeviceSynchronize();
 	return status;
 }
 
 __global__ void initPop(float* rnd, bool *pop,unsigned int length) {
 	unsigned int idx = blockIdx.x;
-	for (unsigned int i = threadIdx.x;i < length;i = i + MAX_THREADS_PER_BLOCK) {
+	for (unsigned int i = threadIdx.x; i < length; i = i + MAX_THREADS_PER_BLOCK) {
 		unsigned int pos = idx * length + i;
 		pop[pos] = (rnd[pos] <= 0.5);
 	}
 }
+
+
 
 ErrorInfo generatePOP(curandGenerator_t& generator, size_t POP_SIZE, int len, bool** pop,bool** npop) {
 	ErrorInfo status;
@@ -348,7 +419,7 @@ ErrorInfo generatePOP(curandGenerator_t& generator, size_t POP_SIZE, int len, bo
 	status.cuda = cudaMalloc(pop, N * sizeof(bool));
 	if (status.failed()) return status;
 
-	cudaMalloc(npop, N * sizeof(bool));
+	status.cuda = cudaMalloc(npop, N * sizeof(bool));
 	if (status.failed()) return status;
 
 	status.curand = curandGenerateUniform(generator, dev_rnd, N);
@@ -365,6 +436,7 @@ ErrorInfo generatePOP(curandGenerator_t& generator, size_t POP_SIZE, int len, bo
 }
 
 ErrorInfo GA(size_t POP_SIZE,int len,int iters,bool dpx_cross,float crossProb,float mutProb) {
+	unsigned long long seed = 42;
 	ErrorInfo status;
 	bool *pop, *npop;
 	int* fit;
@@ -372,25 +444,33 @@ ErrorInfo GA(size_t POP_SIZE,int len,int iters,bool dpx_cross,float crossProb,fl
 	int* tourn;
 	float  *probs;
 	int *points;
+	EvalInfo eval;
 	status.cuda = InitFit(&fit, POP_SIZE);
 	status.cuda = InitWin(&win, POP_SIZE);
 	status.cuda = InitTournRandom(&tourn, POP_SIZE);
 	status = initProbs(&probs, &points, POP_SIZE);
 
 	curandGenerator_t generator;
-	status.curand = initGenerator(generator,clock());
+	status.curand = initGenerator(generator, seed);
 	if (status.failed()) return status;
 
 
-	status = generatePOP(generator, POP_SIZE, len, &pop,&npop);
-	
+	//status = generatePOP(generator, POP_SIZE, len, &pop,&npop);
+	// usa la curand device API para generar la poblacion sin prealocar numeros aleatorios para eso
+	status = generatePOP_device(seed, POP_SIZE, len, &pop, &npop);
+	//status = generatePOP_device(hash64shift(seed), POP_SIZE, len, &pop, &npop);
+
+	// cambia el offset del generador para que no se sobreponga con el usado para la generacion de la poblacion
+	curandSetGeneratorOffset(generator, POP_SIZE * len);
 
 	if (status.failed()) {
 		fprintf(stderr, "generatePOP failed!");
 		return status;
 	}
-	printf("gen %d: ", 0);
-	status = evaluate(pop, POP_SIZE, len,fit);
+
+	
+	status = evaluate(pop, POP_SIZE, len,fit,eval);
+	if (SALIDA) printf("gen %d: Min: %f, Max: %f, Avg: %f\n", 0, eval.min, eval.max, eval.avg);
 
 	for (int gen = 1; gen <= iters; gen++) { // while not optimalSolutionFound
 		// elegir POP_SIZE parejas para el torneo
@@ -431,8 +511,8 @@ ErrorInfo GA(size_t POP_SIZE,int len,int iters,bool dpx_cross,float crossProb,fl
 		tmp = pop;
 		pop = npop;
 		npop = tmp;
-		printf("gen %d: ", gen);
-		status = evaluate(pop, POP_SIZE, len, fit);
+		status = evaluate(pop, POP_SIZE, len, fit,eval);
+		if (SALIDA && (gen % SALIDA_STEP) == 0) printf("gen %d: Min: %f, Max: %f, Avg: %f\n", gen, eval.min, eval.max, eval.avg);
 	}
 	return status;
 }
@@ -454,9 +534,11 @@ int main()
 	// TODO: arreglar para POP_SIZE no multiplo de MAX_THREADS
 	unsigned int POP_SIZE = 2048 ;
 	int len = 10000;
-	int iters = 2000; 
+	int iters = 3000; 
+	float pMutacion = 0.4;
+	float pCruce = 1;
 	
-	GA(POP_SIZE, len, iters, false, 0.9, 0.1);
+	GA(POP_SIZE, len, iters, false, pCruce,pMutacion);
 
 
 	// cudaDeviceReset must be called before exiting in order for profiling and
