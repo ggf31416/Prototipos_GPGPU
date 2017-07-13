@@ -352,15 +352,15 @@ ErrorInfo evaluate(bool* pop, size_t POP_SIZE, int length,int* dev_fit,EvalInfo&
 }
 
 
-ErrorInfo evaluate_bitwise(Data* pop, size_t POP_SIZE, int length, int* dev_fit, EvalInfo& eval) {
+ErrorInfo evaluate_bitwise(Data* pop, size_t POP_SIZE, int realLength,int length, int* dev_fit, EvalInfo& eval) {
 
 	float avgFit;
 	int minFit, maxFit;
 	ErrorInfo status;
 
 
-	int realLength = (length + DataSize - 1) / DataSize;
-	fitness_b << < POP_SIZE, MAX_THREADS_PER_BLOCK >> > (pop, dev_fit, realLength,DataMask,length);
+
+	fitness_b << < POP_SIZE, MAX_THREADS_PER_BLOCK >> > (pop, dev_fit, realLength,FirstBitMask,length);
 	status.cuda = cudaGetLastError();
 	if (status.failed()) return status;
 
@@ -599,6 +599,7 @@ ErrorInfo GA_bitwise(size_t POP_SIZE, int len, int iters, bool dpx_cross, float 
 	float  *probs;
 	int *points;
 	EvalInfo eval;
+	int realLength = (len + DataSize - 1) / DataSize;
 	status.cuda = InitFit(&fit, POP_SIZE);
 	status.cuda = InitWin(&win, POP_SIZE);
 	status.cuda = InitTournRandom(&tourn, POP_SIZE);
@@ -623,7 +624,7 @@ ErrorInfo GA_bitwise(size_t POP_SIZE, int len, int iters, bool dpx_cross, float 
 	}
 
 
-	status = evaluate_bitwise(pop, POP_SIZE, len, fit, eval);
+	status = evaluate_bitwise(pop, POP_SIZE, realLength,len, fit, eval);
 	if (SALIDA) printf("gen %d: Min: %f, Max: %f, Avg: %f\n", 0, eval.min, eval.max, eval.avg);
 
 	for (int gen = 1; gen <= iters; gen++) { // while not optimalSolutionFound
@@ -639,11 +640,11 @@ ErrorInfo GA_bitwise(size_t POP_SIZE, int len, int iters, bool dpx_cross, float 
 		// seleccion
 		if (dpx_cross) {
 			makeRandomNumbersDpx(generator, POP_SIZE, len, probs, points);
-			dpx_b << < POP_SIZE / 2, MAX_THREADS_PER_BLOCK >> >(pop, npop, win, probs, points, len, crossProb);
+			dpx_b << < POP_SIZE / 2, MAX_THREADS_PER_BLOCK >> >(pop, npop, win, probs, points, realLength, crossProb);
 		}
 		else {
 			makeRandomNumbersSpx(generator, POP_SIZE, len, probs, points);
-			spx_b << < POP_SIZE / 2, MAX_THREADS_PER_BLOCK >> >(pop, npop, win, probs, points, len, crossProb);
+			spx_b << < POP_SIZE / 2, MAX_THREADS_PER_BLOCK >> >(pop, npop, win, probs, points, realLength, crossProb);
 		}
 		status.cuda = cudaGetLastError();
 		if (status.failed()) return status;
@@ -656,7 +657,7 @@ ErrorInfo GA_bitwise(size_t POP_SIZE, int len, int iters, bool dpx_cross, float 
 		status = makeRandomNumbersMutation(generator, POP_SIZE, len, probs, points);
 
 		// mutacion
-		mutation_b << < POP_SIZE / MAX_THREADS_PER_BLOCK, MAX_THREADS_PER_BLOCK >> >(npop, probs, points, len, DataMask, mutProb);
+		mutation_b << < POP_SIZE / MAX_THREADS_PER_BLOCK, MAX_THREADS_PER_BLOCK >> >(npop, probs, points, realLength, FirstBitMask, mutProb);
 		status.cuda = cudaGetLastError();
 		if (status.failed()) return status;
 		status.cuda = cudaDeviceSynchronize();
@@ -665,7 +666,7 @@ ErrorInfo GA_bitwise(size_t POP_SIZE, int len, int iters, bool dpx_cross, float 
 		tmp = pop;
 		pop = npop;
 		npop = tmp;
-		status = evaluate_bitwise(pop, POP_SIZE, len, fit, eval);
+		status = evaluate_bitwise(pop, POP_SIZE, realLength, len, fit, eval);
 		if (SALIDA && (gen % SALIDA_STEP) == 0) printf("gen %d: Min: %f, Max: %f, Avg: %f\n", gen, eval.min, eval.max, eval.avg);
 	}
 	return status;

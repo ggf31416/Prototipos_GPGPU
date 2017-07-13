@@ -9,6 +9,7 @@ typedef uint32_t Data;
 // 32 (if Data is unsigned int) or 64 (if Data is unsigned long).
 #define DataSize 32
 #define DataMask (Data)(~(0ull))
+#define FirstBitMask (Data)(1ull << (DataSize - 1))
 
 ErrorInfo generatePOP_device_bitwise(unsigned long seed, size_t POP_SIZE, int len, Data** pop, Data** npop);
 __global__ void tournament_b(int * fit, int * random, int * win);
