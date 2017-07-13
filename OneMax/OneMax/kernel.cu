@@ -8,80 +8,28 @@
 #include <stdio.h>
 #include "notbitwise.cuh"
 #include "stdint.h"
+#include "ErrorInfo.h"
+#include "bitwise.cuh"
+
+#ifdef __INTELLISENSE__
+
+//for __syncthreads()
+#ifndef __CUDACC_RTC__ 
+#define __CUDACC_RTC__
+#endif // !(__CUDACC_RTC__)
+//for atomicAdd
+#ifndef __CUDACC__
+#define __CUDACC__
+#endif // !__CUDACC__
+
+#define __DEVICE_FUNCTIONS_H__
+
+#endif
 
 #define SALIDA 1
 #define SALIDA_STEP 50
 #define INIT_THREADS 128
-
-static const char *curandGetErrorString(curandStatus_t error)
-{
-	switch (error)
-	{
-	case CURAND_STATUS_SUCCESS:
-		return "CURAND_STATUS_SUCCESS";
-
-	case CURAND_STATUS_VERSION_MISMATCH:
-		return "CURAND_STATUS_VERSION_MISMATCH";
-
-	case CURAND_STATUS_NOT_INITIALIZED:
-		return "CURAND_STATUS_NOT_INITIALIZED";
-
-	case CURAND_STATUS_ALLOCATION_FAILED:
-		return "CURAND_STATUS_ALLOCATION_FAILED";
-
-	case CURAND_STATUS_TYPE_ERROR:
-		return "CURAND_STATUS_TYPE_ERROR";
-
-	case CURAND_STATUS_OUT_OF_RANGE:
-		return "CURAND_STATUS_OUT_OF_RANGE";
-
-	case CURAND_STATUS_LENGTH_NOT_MULTIPLE:
-		return "CURAND_STATUS_LENGTH_NOT_MULTIPLE";
-
-	case CURAND_STATUS_DOUBLE_PRECISION_REQUIRED:
-		return "CURAND_STATUS_DOUBLE_PRECISION_REQUIRED";
-
-	case CURAND_STATUS_LAUNCH_FAILURE:
-		return "CURAND_STATUS_LAUNCH_FAILURE";
-
-	case CURAND_STATUS_PREEXISTING_FAILURE:
-		return "CURAND_STATUS_PREEXISTING_FAILURE";
-
-	case CURAND_STATUS_INITIALIZATION_FAILED:
-		return "CURAND_STATUS_INITIALIZATION_FAILED";
-
-	case CURAND_STATUS_ARCH_MISMATCH:
-		return "CURAND_STATUS_ARCH_MISMATCH";
-
-	case CURAND_STATUS_INTERNAL_ERROR:
-		return "CURAND_STATUS_INTERNAL_ERROR";
-	}
-
-	return "<unknown>";
-}
-
-struct ErrorInfo {
-	cudaError_t cuda;
-	curandStatus_t curand;
-
-	ErrorInfo() : cuda(cudaSuccess), curand(CURAND_STATUS_SUCCESS){}
-
-	bool ok() { return (cudaSuccess == this->cuda)  && (CURAND_STATUS_SUCCESS == this->curand); }
-	bool failed() {
-			if ((cudaSuccess == this->cuda) && (CURAND_STATUS_SUCCESS == this->curand)) {
-				return false;
-			}
-			else {
-				if (cudaSuccess != this->cuda) {
-					printf("Error Cuda: %s\n", cudaGetErrorString(this->cuda));
-				}
-				if (CURAND_STATUS_SUCCESS != this->curand) {
-					printf("Error Curand: %s (%d)\n", curandGetErrorString(this->curand),(int)this->curand);
-				}
-				return true;
-			}
-	}
-};
+#define makeRandomInts makeRandomIntegers2
 
 struct EvalInfo {
 	double min;
@@ -172,10 +120,11 @@ __global__ void maximo(int* dev_rnd, int* dev_output, unsigned int len)
 __global__ void scaleRandom(float* floatRnd, int* intRnd, size_t N, unsigned int scale) {
 	unsigned int pos = blockIdx.x * blockDim.x + threadIdx.x;
 	if (pos < N) {
-		intRnd[pos] = truncf(floatRnd[pos] * (scale + 0.999999f));
+		intRnd[pos] = __float2int_rd(floatRnd[pos] * (scale + 0.999999f));
 	}
 
 }
+
 
 ErrorInfo makeRandomIntegers(curandGenerator_t& generator, int* indices, unsigned int N, unsigned int max) {
 	ErrorInfo status;
@@ -200,6 +149,66 @@ ErrorInfo makeRandomIntegers(curandGenerator_t& generator, int* indices, unsigne
 
 }
 
+
+__global__ void scaleRandom2(uint32_t* rnd,  size_t N, double scale) {
+	unsigned int pos = blockIdx.x * blockDim.x + threadIdx.x;
+	if (pos < N) {
+		rnd[pos] = __double2uint_rd(__dmul_rd (rnd[pos] , scale));
+	}
+
+}
+
+__global__ void scaleRandomMod(uint32_t* rnd, size_t N, uint32_t max1) {
+	unsigned int pos = blockIdx.x * blockDim.x + threadIdx.x;
+	if (pos < N) {
+		rnd[pos] = rnd[pos] % max1;
+	}
+
+}
+
+
+
+ErrorInfo makeRandomIntegers2(curandGenerator_t& generator, int32_t* indices, unsigned int N, unsigned int max) {
+	ErrorInfo status;
+	uint32_t* uindices = (uint32_t*)indices; // reinterpreto indices como si fueran unsigned
+	double scale = (double)(max + (1 - 1e-6)) / ((1LL << 32) - 1) ;
+
+	status.curand = curandGenerate(generator, uindices, N);
+	status.cuda = cudaDeviceSynchronize();
+	if (status.failed()) return status;
+
+	unsigned int blocks = (N + MAX_THREADS_PER_BLOCK - 1) / MAX_THREADS_PER_BLOCK; // ceil(N/MAX_THREADS_PER_BLOCK)
+	scaleRandom2 << <blocks, MAX_THREADS_PER_BLOCK >> >( uindices, N, scale);
+	status.cuda = cudaGetLastError();
+	if (status.failed()) return status;
+
+	status.cuda = cudaDeviceSynchronize();
+
+	return status;
+
+}
+
+ErrorInfo makeRandomIntegersMod(curandGenerator_t& generator, int32_t* indices, unsigned int N, unsigned int max) {
+	ErrorInfo status;
+	uint32_t* uindices = (uint32_t*)indices; // reinterpreto indices como si fueran unsigned
+
+	status.curand = curandGenerate(generator, uindices, N);
+	status.cuda = cudaDeviceSynchronize();
+	if (status.failed()) return status;
+
+	unsigned int blocks = (N + MAX_THREADS_PER_BLOCK - 1) / MAX_THREADS_PER_BLOCK; // ceil(N/MAX_THREADS_PER_BLOCK)
+	scaleRandomMod << <blocks, MAX_THREADS_PER_BLOCK >> >(uindices, N, max+1);
+	status.cuda = cudaGetLastError();
+	if (status.failed()) return status;
+
+	status.cuda = cudaDeviceSynchronize();
+
+	return status;
+
+}
+
+
+
 curandStatus_t initGenerator(curandGenerator_t& generator ,unsigned long long seed) {
 	curandStatus_t s =  curandCreateGenerator(&generator, CURAND_RNG_PSEUDO_PHILOX4_32_10);
 	if (s != CURAND_STATUS_SUCCESS) {
@@ -223,7 +232,7 @@ ErrorInfo makeRandomNumbersMutation(curandGenerator_t& generator, size_t POP_SIZ
 	status.curand = curandGenerateUniform(generator, randomPM, POP_SIZE);
 	if (status.failed()) return status;
 
-	status = makeRandomIntegers(generator, randomPoint, POP_SIZE, len - 1);
+	status = makeRandomInts(generator, randomPoint, POP_SIZE, len - 1);
 	if (status.failed()) return status;
 	status.cuda = cudaDeviceSynchronize();
 
@@ -237,7 +246,7 @@ ErrorInfo makeRandomNumbersSpx(curandGenerator_t& generator, size_t POP_SIZE, in
 	ErrorInfo status;
 	size_t HALF_SIZE = POP_SIZE / 2;
 
-	status = makeRandomIntegers(generator, randomPoint, HALF_SIZE, len - 1);
+	status = makeRandomInts(generator, randomPoint, HALF_SIZE, len - 1);
 	if (status.failed()) return status;
 
 	status.curand = curandGenerateUniform(generator, randomPC, HALF_SIZE);
@@ -251,7 +260,7 @@ ErrorInfo makeRandomNumbersDpx(curandGenerator_t& generator, size_t POP_SIZE, in
 	ErrorInfo status;
 	size_t HALF_SIZE = POP_SIZE / 2;
 
-	status = makeRandomIntegers(generator, randomPoint, POP_SIZE, len - 1);
+	status = makeRandomInts(generator, randomPoint, POP_SIZE, len - 1);
 	if (status.failed()) return status;
 
 	status.curand = curandGenerateUniform(generator, randomPC, HALF_SIZE);
@@ -269,7 +278,7 @@ cudaError_t InitTournRandom( int** random, size_t POP_SIZE) {
 
 ErrorInfo makeRandomNumbersTournement(curandGenerator_t& generator, size_t POP_SIZE, int* random) {
 	// generar (POPSIZE * 2) numeros aleatorios enteros de 0 a POPSIZE - 1
-	return makeRandomIntegers(generator, random, POP_SIZE * 2, POP_SIZE - 1);
+	return makeRandomInts(generator, random, POP_SIZE * 2, POP_SIZE - 1);
 }
 
 cudaError_t InitFit(int** dev_fit,size_t POP_SIZE) {
@@ -339,6 +348,69 @@ ErrorInfo evaluate(bool* pop, size_t POP_SIZE, int length,int* dev_fit,EvalInfo&
 	eval.avg = avgFit;
 	//if (SALIDA) printf("Min: %f, Max: %f, Avg: %f\n", minFit / (double)length,maxFit / (double) length, avgFit);
 	
+	return status;
+}
+
+
+ErrorInfo evaluate_bitwise(Data* pop, size_t POP_SIZE, int length, int* dev_fit, EvalInfo& eval) {
+
+	float avgFit;
+	int minFit, maxFit;
+	ErrorInfo status;
+
+
+	int realLength = (length + DataSize - 1) / DataSize;
+	fitness_b << < POP_SIZE, MAX_THREADS_PER_BLOCK >> > (pop, dev_fit, realLength,DataMask,length);
+	status.cuda = cudaGetLastError();
+	if (status.failed()) return status;
+
+	status.cuda = cudaDeviceSynchronize();
+	if (status.failed()) return status;
+
+
+	int* out1;
+	float* out2;
+
+	int nroBlocks = (POP_SIZE + MAX_THREADS_PER_BLOCK - 1) / (MAX_THREADS_PER_BLOCK);
+	cudaMalloc(&out1, nroBlocks * sizeof(int));
+	cudaMalloc(&out2, nroBlocks * sizeof(float));
+	//minimo << <nroBlocks, MAX_THREADS_PER_BLOCK, MAX_THREADS_PER_BLOCK * sizeof(float) >> >(dev_fit, out1);
+	minimo << <nroBlocks, MAX_THREADS_PER_BLOCK >> >(dev_fit, out1, POP_SIZE);
+	minimo << <1, MAX_THREADS_PER_BLOCK >> >(out1, out1, nroBlocks);
+	cudaMemcpy(&minFit, out1, sizeof(int), cudaMemcpyDeviceToHost);
+
+
+	maximo << <nroBlocks, MAX_THREADS_PER_BLOCK >> >(dev_fit, out1, POP_SIZE);
+	maximo << <1, MAX_THREADS_PER_BLOCK >> >(out1, out1, nroBlocks);
+	cudaMemcpy(&maxFit, out1, sizeof(int), cudaMemcpyDeviceToHost);
+
+	sumar << <nroBlocks, MAX_THREADS_PER_BLOCK >> >(dev_fit, out2, POP_SIZE);
+	sumar << <1, MAX_THREADS_PER_BLOCK >> >(out2, out2, nroBlocks);
+	cudaMemcpy(&avgFit, out2, sizeof(float), cudaMemcpyDeviceToHost);
+
+	/*
+	int *host_fit;
+	status.cuda = cudaMallocHost((void**)&host_fit, sizeof(int) * POP_SIZE); // para calcular max,min,avg
+	status.cuda = cudaMemcpy(host_fit, dev_fit, POP_SIZE * sizeof(int), cudaMemcpyDeviceToHost);
+	if (status.failed()) return status;
+
+	avgFit = maxFit = minFit  = host_fit[0];
+	for (size_t i = 1; i < POP_SIZE; i++) {
+	avgFit += host_fit[i];
+	maxFit = host_fit[i] > maxFit ? host_fit[i] : maxFit;
+	minFit = host_fit[i] < minFit ? host_fit[i] : minFit;
+	}
+	//cudaFreeHost(host_fit);
+	*/
+	cudaFree(out1);
+	cudaFree(out2);
+
+	avgFit = (avgFit / POP_SIZE) / length;
+	eval.min = minFit / (double)length;
+	eval.max = maxFit / (double)length;
+	eval.avg = avgFit;
+	//if (SALIDA) printf("Min: %f, Max: %f, Avg: %f\n", minFit / (double)length,maxFit / (double) length, avgFit);
+
 	return status;
 }
 
@@ -517,6 +589,88 @@ ErrorInfo GA(size_t POP_SIZE,int len,int iters,bool dpx_cross,float crossProb,fl
 	return status;
 }
 
+ErrorInfo GA_bitwise(size_t POP_SIZE, int len, int iters, bool dpx_cross, float crossProb, float mutProb) {
+	unsigned long long seed = 42;
+	ErrorInfo status;
+	Data *pop, *npop;
+	int* fit;
+	int* win;
+	int* tourn;
+	float  *probs;
+	int *points;
+	EvalInfo eval;
+	status.cuda = InitFit(&fit, POP_SIZE);
+	status.cuda = InitWin(&win, POP_SIZE);
+	status.cuda = InitTournRandom(&tourn, POP_SIZE);
+	status = initProbs(&probs, &points, POP_SIZE);
+
+	curandGenerator_t generator;
+	status.curand = initGenerator(generator, seed);
+	if (status.failed()) return status;
+
+
+	//status = generatePOP(generator, POP_SIZE, len, &pop,&npop);
+	// usa la curand device API para generar la poblacion sin prealocar numeros aleatorios para eso
+	status = generatePOP_device_bitwise(seed, POP_SIZE, len, &pop, &npop);
+	//status = generatePOP_device(hash64shift(seed), POP_SIZE, len, &pop, &npop);
+
+	// cambia el offset del generador para que no se sobreponga con el usado para la generacion de la poblacion
+	curandSetGeneratorOffset(generator, POP_SIZE * len);
+
+	if (status.failed()) {
+		fprintf(stderr, "generatePOP failed!");
+		return status;
+	}
+
+
+	status = evaluate_bitwise(pop, POP_SIZE, len, fit, eval);
+	if (SALIDA) printf("gen %d: Min: %f, Max: %f, Avg: %f\n", 0, eval.min, eval.max, eval.avg);
+
+	for (int gen = 1; gen <= iters; gen++) { // while not optimalSolutionFound
+											 // elegir POP_SIZE parejas para el torneo
+		status = makeRandomNumbersTournement(generator, POP_SIZE, tourn);
+		if (status.failed()) return status;
+
+		// elegir POP_SIZE ganadores
+		tournament << < POP_SIZE / MAX_THREADS_PER_BLOCK, MAX_THREADS_PER_BLOCK >> > (fit, tourn, win);
+		status.cuda = cudaGetLastError();
+		if (status.failed()) return status;
+
+		// seleccion
+		if (dpx_cross) {
+			makeRandomNumbersDpx(generator, POP_SIZE, len, probs, points);
+			dpx_b << < POP_SIZE / 2, MAX_THREADS_PER_BLOCK >> >(pop, npop, win, probs, points, len, crossProb);
+		}
+		else {
+			makeRandomNumbersSpx(generator, POP_SIZE, len, probs, points);
+			spx_b << < POP_SIZE / 2, MAX_THREADS_PER_BLOCK >> >(pop, npop, win, probs, points, len, crossProb);
+		}
+		status.cuda = cudaGetLastError();
+		if (status.failed()) return status;
+
+		status.cuda = cudaDeviceSynchronize();
+		if (status.failed()) return status;
+
+		// elegir numeros aleatorios para mutacion 
+		// se reusa la memoria que se uso para los numeros aleatorios de la seleccion
+		status = makeRandomNumbersMutation(generator, POP_SIZE, len, probs, points);
+
+		// mutacion
+		mutation_b << < POP_SIZE / MAX_THREADS_PER_BLOCK, MAX_THREADS_PER_BLOCK >> >(npop, probs, points, len, DataMask, mutProb);
+		status.cuda = cudaGetLastError();
+		if (status.failed()) return status;
+		status.cuda = cudaDeviceSynchronize();
+
+		Data* tmp;
+		tmp = pop;
+		pop = npop;
+		npop = tmp;
+		status = evaluate_bitwise(pop, POP_SIZE, len, fit, eval);
+		if (SALIDA && (gen % SALIDA_STEP) == 0) printf("gen %d: Min: %f, Max: %f, Avg: %f\n", gen, eval.min, eval.max, eval.avg);
+	}
+	return status;
+}
+
 
 int main()
 {
@@ -534,7 +688,7 @@ int main()
 	// TODO: arreglar para POP_SIZE no multiplo de MAX_THREADS
 	unsigned int POP_SIZE = 2048 ;
 	int len = 10000;
-	int iters = 3000; 
+	int iters = 1000; 
 	float pMutacion = 0.4;
 	float pCruce = 1;
 	

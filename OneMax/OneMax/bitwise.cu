@@ -1,0 +1,297 @@
+
+
+
+#include "cuda_runtime.h"
+#include "device_launch_parameters.h"
+
+#include <stdio.h>
+
+
+#include "curand_kernel.h"
+#include "bitwise.cuh"
+
+
+#define MAX_THREADS_PER_BLOCK 1024
+#define INIT_THREADS 128
+
+// Kernel invocation: fitness <<<POP_SIZE,MAX_THREADS_PER_BLOCK>>> (pgpu,fitgpu,REAL_LEN,MASK,CHROM_LEN);
+// POP_SIZE: number of individuals of the population.
+// MAX_THREADS_PER_BLOCK: constant with the maximum number of threads per block. 
+// CHROM_LEN: length of the chromosome.
+// pgpu: pointer to the population. 
+// fitgpu: pointer to an auxiliary structure to store the fitness.
+// MASK: A bit mask of the first bit. MASK = (Data)pow(2.0, (int)DataSize-1)
+// REAL_LEN: real length of the chromosome of datatype Data. 
+// REAL_LEN = (CHROM_LEN%DataSize)==0?CHROM_LEN/DataSize:(CHROM_LEN/DataSize + 1) 
+
+__global__ void fitness_b(Data * pop, int * fit, int realLength, Data mask, int length) {
+    
+    __shared__ int partial[MAX_THREADS_PER_BLOCK];  // array to store partial fitness
+    int idx = blockIdx.x;  // the number of the individual is indicated by the block number
+    partial[threadIdx.x] = 0; // each array position is initialized in 0
+
+    int i,j;
+    // each thread adds in partial its corresponding values
+    Data aux, shift, value;
+    for(i=threadIdx.x;i<realLength;i=i+MAX_THREADS_PER_BLOCK) {
+         aux = pop[idx*realLength+i];
+	 shift = mask;
+	 for(j=0;j<DataSize && (i*DataSize+j<length);j=j+1) {
+	       value = (aux & shift)==0?0:1;
+	       shift = shift >> 1;
+	       partial[threadIdx.x] = partial[threadIdx.x] + value;
+	 }
+    }
+
+    // reduction algorithm to add the partial fitness values
+    __syncthreads();
+    i = MAX_THREADS_PER_BLOCK/2;
+    while (i!=0) {
+       if (threadIdx.x < i)
+	  partial[threadIdx.x] = partial[threadIdx.x] + partial[threadIdx.x + i]; 
+       __syncthreads();
+       i = i/2;
+     }
+    
+    // finally thread 0 writes the fitness value in global memory
+    if (threadIdx.x == 0)
+	fit[idx] = partial[0];	
+}
+
+// Kernel invocation: spx <<POP_SIZE/2,MAX_THREADS_PER_BLOCK>>> (oldpop,newpop,positions,randomPC,randomPoint,
+// REAL_LEN,PROB_CROSS); 
+// POP_SIZE: number of individuals of the population.
+// MAX_THREADS_PER_BLOCK: constant with the maximum number of threads per block. 
+// oldpop: pointer to global memory that stores the old population. 
+// newpop: pointer to global memory that stores the new population.
+// positions: pointer to global memory that stores the indexes of individuals for crossover
+// randomPC: pointer to global memory that stores the random values for crossover.
+// randomPoint: pointer to global memory that stores the random points for crossover.
+// REAL_LEN: real length of the chromosome of datatype Data. 
+// REAL_LEN = (CHROM_LEN%DataSize)==0?CHROM_LEN/DataSize:(CHROM_LEN/DataSize + 1) 
+// PROB_CROSS: crossover probability. 
+
+__global__ void spx_b(Data *pop, Data *npop, int *pos, float *randomPC, int *randomPoint, int length, float PROB_CROSS){
+
+  int idx = blockIdx.x; // the number of the individual is indicated by the block number
+  int ind1 = pos[2*idx]; // index of first individual for crossover
+  int ind2 = pos[2*idx+1]; // index of second individual for crossover
+  float pc = randomPC[idx]; // value for crossover
+  int pnt = randomPoint[idx]; // crossover point
+  int i;
+	
+  if (pc <= PROB_CROSS) {
+     // Cross individuals
+     for(i=threadIdx.x;i<length;i=i+MAX_THREADS_PER_BLOCK) {
+	  if (i<(pnt/DataSize)) {	  
+              //copy word from parent ind1 to child 2*idx
+              npop[2*idx*length+i] = pop[ind1*length+i];
+              //copy word from parent ind2 to child 2*idx + 1
+              npop[(2*idx+1)*length+i] = pop[ind2*length+i];
+	  } else if (i==(pnt/DataSize) && pnt % DataSize > 0) {
+	         unsigned int word = pnt/DataSize;
+	         unsigned int move = pnt % DataSize;
+	         unsigned int moveComp = DataSize - move;
+                 npop[2*idx*length+word] = ((Data)(pop[ind1*length+word] >> moveComp) << moveComp) | ((Data)(pop[ind2*length+word] << move) >>  move);
+                 npop[(2*idx+1)*length+word] = ((Data)(pop[ind2*length+word] >> moveComp) << moveComp) | ((Data)(pop[ind1*length+word] << move) >>  move);	  
+	  } else {
+	    //copy word from parent ind2 to child 2*idx
+            npop[2*idx*length+i] = pop[ind2*length+i];
+	    //copy word from parent ind1 to child 2*idx + 1
+            npop[(2*idx+1)*length+i] = pop[ind1*length+i];
+	  }
+     }
+ } else {
+      // Copy individuals
+      for(i=threadIdx.x;i<length;i=i+MAX_THREADS_PER_BLOCK) {
+         //copy word from parent ind1 to child 2*idx
+	 npop[(2*idx)*length+i] = pop[ind1*length+i];
+	 //copy word from parent ind2 to child 2*idx + 1
+	 npop[(2*idx+1)*length+i] = pop[ind2*length+i];
+      }
+ }
+
+}
+
+
+
+// Kernel invocation: dpx <<POP_SIZE/2,MAX_THREADS_PER_BLOCK>>> (oldpop,newpop,positions,randomPC,randomPoint,
+// REAL_LEN,PROB_CROSS); 
+// POP_SIZE: number of individuals of the population.
+// MAX_THREADS_PER_BLOCK: constant with the maximum number of threads per block. 
+// oldpop: pointer to global memory that stores the old population. 
+// newpop: pointer to global memory that stores the new population.
+// positions: pointer to global memory that stores the indexes of individuals for crossover
+// randomPC: pointer to global memory that stores the random values for crossover.
+// randomPoint: pointer to global memory that stores the random points for crossover.
+// REAL_LEN: real length of the chromosome of datatype Data. 
+// REAL_LEN = (CHROM_LEN%DataSize)==0?CHROM_LEN/DataSize:(CHROM_LEN/DataSize + 1) 
+// PROB_CROSS: crossover probability. 
+
+__global__ void dpx_b(Data *pop, Data *npop, int *pos, float *randomPC, int *randomPoint, int length, float PROB_CROSS){
+
+   int idx = blockIdx.x;  // the number of the individual is indicated by the block number
+   int ind1 = pos[2*idx];  // index of first individual for crossover
+   int ind2 = pos[2*idx+1]; // index of second individual for crossover
+   float pc = randomPC[idx]; // value for crossover
+   int pnt1 = randomPoint[2*idx]; // first crossover point
+   int pnt2 = randomPoint[2*idx+1]; // second crossover point. pnt2 != pnt1
+   int word1 = pnt1/DataSize;     // word of the first crossover point
+   unsigned int wordPos1 = pnt1 % DataSize; // position in the word of the first crossover point 
+   int word2 = pnt2/DataSize;     // word of the second crossover point
+   unsigned int wordPos2 = pnt2 % DataSize; // position in the word of the second crossover point 
+
+   int i;
+
+   if (pc <= PROB_CROSS) {
+       // Cross individuals
+       if (word1!=word2) { 
+          unsigned int move;
+          for(i=threadIdx.x;i<length;i=i+MAX_THREADS_PER_BLOCK) {
+             if (i<word1 || i>word2 || (i==word2 && wordPos2==0)) {
+	        //copy word from parent ind1 to child 2*idx
+	        npop[2*idx*length+i] = pop[ind1*length+i];
+		//copy word from parent ind2 to child 2*idx + 1
+ 		npop[(2*idx+1)*length+i] = pop[ind2*length+i];
+	     } else if (i==word1 && wordPos1 > 0) {
+                 // the word has to be shifted  
+       		 move = DataSize -  wordPos1;
+    		 npop[2*idx*length+i] = ((Data)(pop[ind1*length+i] >> move) << move) | ((Data)(pop[ind2*length+i] << wordPos1) >>  wordPos1);
+		 npop[(2*idx+1)*length+i] = ((Data)(pop[ind2*length+i] >> move) << move) | ((Data)(pop[ind1*length+i] << wordPos1) >> wordPos1);
+	     } else if (i==word2 && wordPos2 > 0) {
+		 // the word has to be shifted
+                 move = DataSize -  wordPos2;
+		 npop[2*idx*length+i] = ((Data)(pop[ind2*length+i] >> move) << move) | ((Data)(pop[ind1*length+i] << wordPos2) >>  wordPos2);
+		 npop[(2*idx+1)*length+i] = ((Data)(pop[ind1*length+i] >> move) << move) | ((Data)(pop[ind2*length+i] << wordPos2) >>  wordPos2);
+	     } else {
+                 //copy word from parent ind2 to child 2*idx	       		    
+                 npop[2*idx*length+i] = pop[ind2*length+i];
+		 //copy word from parent ind1 to child 2*idx + 1
+	         npop[(2*idx+1)*length+i] = pop[ind1*length+i];
+	     }
+          }
+       } else { // wordPos1 != wordPos2 since pnt2 != pnt1
+              for(i=threadIdx.x;i<length;i=i+MAX_THREADS_PER_BLOCK) {
+                  if (i<word1) {
+                    //copy word from parent ind1 to child 2*idx
+	            npop[2*idx*length+i] = pop[ind1*length+i];
+		    //copy word from parent ind2 to child 2*idx + 1
+ 		    npop[(2*idx+1)*length+i] = pop[ind2*length+i];
+	          } else if (i==word1) {
+                    // the word has to be shifted 
+                    unsigned int move = DataSize - wordPos1; 
+	            unsigned int move2 = DataSize - wordPos2;
+	       	    Data rest1 = ((Data)(pop[ind2*length+i] << wordPos1) >>  wordPos1);
+	       	    Data rest2 = ((Data)(pop[ind1*length+i] << wordPos1) >>  wordPos1);
+                    if (wordPos1!=0) {
+                        npop[2*idx*length+i] = ((Data)(pop[ind1*length+i] >> move) << move) | ((Data)(rest1 >> move2) << move2) | ((Data)(rest2 << wordPos2) >>  wordPos2);
+		        npop[(2*idx+1)*length+i] = ((Data)(pop[ind2*length+i] >> move) << move) | ((Data)(rest2 >> move2) << move2) | ((Data)(rest1 << wordPos2) >>  wordPos2);
+		     } else {
+ 		        npop[2*idx*length+i] = ((Data)(rest1 >> move2) << move2) | ((Data)(rest2 << wordPos2) >>  wordPos2);
+  			npop[(2*idx+1)*length+i] = ((Data)(rest2 >> move2) << move2) | ((Data)(rest1 << wordPos2) >>  wordPos2);
+                     }
+	          } else {
+                      //copy word from parent ind2 to child 2*idx	       		    
+                      npop[2*idx*length+i] = pop[ind2*length+i];
+		      //copy word from parent ind1 to child 2*idx + 1
+	              npop[(2*idx+1)*length+i] = pop[ind1*length+i];
+	          }
+              }
+      }
+   } else {
+       // Copy individuals
+       for(i=threadIdx.x;i<length;i=i+MAX_THREADS_PER_BLOCK) {
+         //copy word from parent ind1 to child 2*idx
+	 npop[(2*idx)*length+i] = pop[ind1*length+i];
+	 //copy word from parent ind2 to child 2*idx + 1
+	 npop[(2*idx+1)*length+i] = pop[ind2*length+i];
+     }
+   }
+}
+
+
+// Kernel invocation: mutation <<<N_BLOCK,BLOCK_LENGTH>>> (pgpu,randomPM,randomPoint,REAL_LEN,MASK,PROB_MUT);
+// N_BLOCK: number of blocks, such that N_BLOCK * BLOCK_LENGTH = POP_SIZE.
+// BLOCK_LENGTH: length of each block, such that N_BLOCK * BLOCK_LENGTH = POP_SIZE.
+// pgpu: pointer to global memory that stores the population. 
+// randomPM: pointer to global memory that stores the random values for mutation.
+// randomPoint: pointer to global memory that stores the random points for mutation.
+// REAL_LEN: real length of the chromosome of datatype Data. 
+// REAL_LEN = (CHROM_LEN%DataSize)==0?CHROM_LEN/DataSize:(CHROM_LEN/DataSize + 1) 
+// MASK: A bit mask of the first bit. MASK = (Data)pow(2.0, (int)DataSize-1)
+// PROB_MUT: mutation probability. 
+
+__global__ void mutation_b(Data *pop, float *randomPM, int *randomPoint, int length, Data mask, float PROB_MUT){
+	
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    float pm = randomPM[idx];   // value for mutation
+    int pnt = randomPoint[idx]; // mutation point
+	
+    if (pm <= PROB_MUT) {
+          int word = pnt/DataSize;
+	  int wordPos = pnt % DataSize;
+          Data aux1 = pop[idx*length+word];
+	  Data aux2 = mask >> wordPos;
+	  pop[idx*length+word] = aux1 ^ aux2;
+    }
+ 
+}
+
+
+
+
+// Kernel invocation: tournament <<<N_BLOCK,BLOCK_LENGTH>>> (fitgpu, randomgpu,winnergpu); 
+// N_BLOCK: number of blocks, such that N_BLOCK * BLOCK_LENGTH = POP_SIZE.
+// BLOCK_LENGTH: length of each block, such that N_BLOCK * BLOCK_LENGTH = POP_SIZE.
+// fitgpu: pointer to global memory that stores the fitness values.
+// randomgpu: pointer to global memory that stores the random numbers for the tournament (2*POP_SIZE).
+// winnergpu: pointer to global memory that stores the positions of the winners of the tournaments.
+
+__global__ void tournament_b(int * fit, int * random, int * win) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int nro1 = random[2*idx];
+    int nro2 = random[2*idx+1];
+    int pos;
+    
+    if (fit[nro1] > fit[nro2]) {
+	pos = nro1;
+    } else {
+	pos = nro2;
+    }
+
+    win[idx] = pos;
+}
+
+__global__ void initPop_device32_bitwise(Data *pop,  unsigned int dataLength, unsigned long long seed) {
+	unsigned int thIdx = blockIdx.x * blockDim.x + threadIdx.x;
+	curandStatePhilox4_32_10_t rndState;
+	curand_init(seed + thIdx, 0ull, 0ull, &rndState);
+
+	for (unsigned int i = threadIdx.x; i < dataLength; i++ ) {
+#if DataSize <= 32
+			uint32_t rnd = curand(&rndState);
+			pop[blockIdx.x * dataLength + i] = (Data)(rnd & DataMask);
+#else
+			uint32_t rnd1 = curand(&rndState);
+			uint32_t rnd2 = curand(&rndState);
+			pop[blockIdx.x * dataLength + i] = ((((uint64_t)rnd1) << 32) + rnd2);
+#endif
+	}
+}
+
+ErrorInfo generatePOP_device_bitwise(unsigned long seed, size_t POP_SIZE, int len, Data** pop, Data** npop) {
+	ErrorInfo status;
+	uint64_t dataLen = (len + DataSize - 1) / DataSize;
+	size_t N = POP_SIZE * dataLen;
+	status.cuda = cudaMalloc(pop, N * sizeof(Data));
+	if (status.failed()) return status;
+	status.cuda = cudaMalloc(npop, N * sizeof(Data));
+	if (status.failed()) return status;
+	
+	initPop_device32_bitwise << < POP_SIZE, INIT_THREADS >> >(*pop, dataLen, seed);
+	status.cuda = cudaGetLastError();
+	if (status.failed()) return status;
+
+	status.cuda = cudaDeviceSynchronize();
+	return status;
+}
