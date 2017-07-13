@@ -262,12 +262,12 @@ __global__ void tournament_b(int * fit, int * random, int * win) {
     win[idx] = pos;
 }
 
-__global__ void initPop_device32_bitwise(Data *pop,  unsigned int dataLength, unsigned long long seed) {
+__global__ void initPop_device32_bitwise(Data *pop,  unsigned int dataLength, int length,unsigned long long seed) {
 	unsigned int thIdx = blockIdx.x * blockDim.x + threadIdx.x;
 	curandStatePhilox4_32_10_t rndState;
 	curand_init(seed + thIdx, 0ull, 0ull, &rndState);
-
-	for (unsigned int i = threadIdx.x; i < dataLength; i++ ) {
+	unsigned int i;
+	for (i = threadIdx.x; i < dataLength; i++ ) {
 #if DataSize <= 32
 			uint32_t rnd = curand(&rndState);
 			pop[blockIdx.x * dataLength + i] = (Data)(rnd & DataMask);
@@ -276,7 +276,12 @@ __global__ void initPop_device32_bitwise(Data *pop,  unsigned int dataLength, un
 			uint32_t rnd2 = curand(&rndState);
 			pop[blockIdx.x * dataLength + i] = ((((uint64_t)rnd1) << 32) + rnd2);
 #endif
+			if (i == dataLength - 1) {
+				// poner en 0 bits sobrantes (cuales???)
+			}
 	}
+	
+
 }
 
 ErrorInfo generatePOP_device_bitwise(unsigned long seed, size_t POP_SIZE, int len, Data** pop, Data** npop) {
