@@ -3,7 +3,7 @@
 #include "device_launch_parameters.h"
 
 #include <stdio.h>
-
+#include "curand_kernel.h"
 #include "notbitwise.cuh"
 
 // Kernel invocation: mutation <<<N_BLOCK,BLOCK_LENGTH>>> (pgpu,randomPM,randomPoint,CHROM_LEN,PROB_MUT);
@@ -166,7 +166,6 @@ __global__ void spx(bool *pop, bool *npop, int *pos, float *randomPC, int *rando
 
 }
 
-
 // Kernel invocation: tournament <<<N_BLOCK,BLOCK_LENGTH>>> (fitgpu, randomgpu,winnergpu); 
 // N_BLOCK: number of blocks, such that N_BLOCK * BLOCK_LENGTH = POP_SIZE.
 // BLOCK_LENGTH: length of each block, such that N_BLOCK * BLOCK_LENGTH = POP_SIZE.
@@ -188,4 +187,37 @@ __global__ void tournament(int * fit, int * random, int * win) {
 	}
 
 	win[idx] = pos;
+}
+
+// inicializa la memoria con numeros aleatorios 8 booleanos contiguos a la vez 
+// de esta manera se podria asegurar que la inicializacion es la misma  para el caso no bitwise que bitwise sin tener que usar atomics en el caso bitwise
+// pues el tamaño en bits del no bitwise siempre tiene que ser multiplo de 8
+__global__ void initPop_device8(bool *pop, unsigned int length, unsigned long long seed) {
+	unsigned int thIdx = blockIdx.x * blockDim.x + threadIdx.x;
+	curandStatePhilox4_32_10_t rndState;
+	curand_init(seed + thIdx, 0ull, 0ull, &rndState);
+	for (unsigned int i = 8 * threadIdx.x; i < length; i = i + INIT_THREADS * 8) {
+		for (int j = 0; j < 8 & (i + j < length); j++) {
+			unsigned int pos = blockIdx.x * length + i + j;
+			float rnd = curand_uniform(&rndState);
+			pop[pos] = (rnd <= 0.5);
+		}
+
+	}
+}
+
+ErrorInfo generatePOP_device(unsigned long seed, size_t POP_SIZE, int len, bool** pop, bool** npop) {
+	ErrorInfo status;
+	size_t N = POP_SIZE * len;
+	status.cuda = cudaMalloc(pop, N * sizeof(bool));
+	if (status.failed()) return status;
+	status.cuda = cudaMalloc(npop, N * sizeof(bool));
+	if (status.failed()) return status;
+	//initPop_device32 << < POP_SIZE, INIT_THREADS >> >(*pop, len, seed);
+	initPop_device8 << < POP_SIZE, INIT_THREADS >> >(*pop, len, seed);
+	status.cuda = cudaGetLastError();
+	if (status.failed()) return status;
+
+	status.cuda = cudaDeviceSynchronize();
+	return status;
 }

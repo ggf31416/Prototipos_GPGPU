@@ -157,6 +157,7 @@ copy "$(CudaToolkitBinDir)\cudart*.dll" "$(OutDir)"</Command>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="bitwise.cuh" />
+    <ClInclude Include="defines_onemax.h" />
     <ClInclude Include="ErrorInfo.h" />
     <ClInclude Include="notbitwise.cuh" />
   </ItemGroup>

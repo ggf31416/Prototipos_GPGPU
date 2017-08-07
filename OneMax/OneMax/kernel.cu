@@ -28,7 +28,7 @@
 
 #define SALIDA 1
 #define SALIDA_STEP 50
-#define INIT_THREADS 128
+
 #define makeRandomInts makeRandomIntegers2
 
 struct EvalInfo {
@@ -57,8 +57,12 @@ __global__ void sumar(T* dev_rnd, float* dev_output,unsigned int len)
 	}
 }
 
+
+
+
+
 // sumar mas optimizado pero mas rigido
-__global__ void sumar2(float* dev_rnd, float* dev_output)
+/*__global__ void sumar2(float* dev_rnd, float* dev_output)
 {
 	extern __shared__ float intermedio[];
 	unsigned int idx = blockIdx.x * blockDim.x * 2 + threadIdx.x;
@@ -75,7 +79,7 @@ __global__ void sumar2(float* dev_rnd, float* dev_output)
 	if (threadIdx.x == 0) {
 		dev_output[blockIdx.x] = intermedio[0];
 	}
-}
+}*/
 
 __global__ void minimo(int* dev_rnd, int* dev_output,unsigned int len)
 {
@@ -153,6 +157,7 @@ ErrorInfo makeRandomIntegers(curandGenerator_t& generator, int* indices, unsigne
 __global__ void scaleRandom2(uint32_t* rnd,  size_t N, double scale) {
 	unsigned int pos = blockIdx.x * blockDim.x + threadIdx.x;
 	if (pos < N) {
+		// multiplicar aleatorio por escala, mul
 		rnd[pos] = __double2uint_rd(__dmul_rd (rnd[pos] , scale));
 	}
 
@@ -429,7 +434,7 @@ uint64_t hash64shift(uint64_t key)
 	return key;
 }
 
-__global__ void initPop_device(bool *pop, unsigned int length,unsigned long long seed) {
+/*__global__ void initPop_device(bool *pop, unsigned int length,unsigned long long seed) {
 	unsigned int thIdx = blockIdx.x * blockDim.x + threadIdx.x;
 	curandStatePhilox4_32_10_t rndState;
 	curand_init(seed + thIdx, 0ull, 0ull, &rndState);
@@ -437,9 +442,11 @@ __global__ void initPop_device(bool *pop, unsigned int length,unsigned long long
 		unsigned int pos = blockIdx.x * length + i;
 		pop[pos] = (curand_uniform(&rndState) <= 0.5);
 	}
-}
+}*/
 
-__global__ void initPop_device32(bool *pop, unsigned int length, unsigned long long seed) {
+
+
+/*__global__ void initPop_device32(bool *pop, unsigned int length, unsigned long long seed) {
 	unsigned int thIdx = blockIdx.x * blockDim.x + threadIdx.x;
 	curandStatePhilox4_32_10_t rndState;
 	curand_init(seed + thIdx, 0ull, 0ull, &rndState);
@@ -451,35 +458,20 @@ __global__ void initPop_device32(bool *pop, unsigned int length, unsigned long l
 		}
 
 	}
-}
+}*/
 
-ErrorInfo generatePOP_device(unsigned long seed, size_t POP_SIZE, int len, bool** pop, bool** npop) {
-	ErrorInfo status;
-	size_t N = POP_SIZE * len;
-	status.cuda = cudaMalloc(pop, N * sizeof(bool));
-	if (status.failed()) return status;
-	status.cuda = cudaMalloc(npop, N * sizeof(bool));
-	if (status.failed()) return status;
 
-	initPop_device32 << < POP_SIZE, INIT_THREADS >> >( *pop, len,seed);
-	status.cuda = cudaGetLastError();
-	if (status.failed()) return status;
-
-	status.cuda = cudaDeviceSynchronize();
-	return status;
-}
-
-__global__ void initPop(float* rnd, bool *pop,unsigned int length) {
+/*__global__ void initPop(float* rnd, bool *pop,unsigned int length) {
 	unsigned int idx = blockIdx.x;
 	for (unsigned int i = threadIdx.x; i < length; i = i + MAX_THREADS_PER_BLOCK) {
 		unsigned int pos = idx * length + i;
 		pop[pos] = (rnd[pos] <= 0.5);
 	}
-}
+}*/
 
 
 
-ErrorInfo generatePOP(curandGenerator_t& generator, size_t POP_SIZE, int len, bool** pop,bool** npop) {
+/*ErrorInfo generatePOP(curandGenerator_t& generator, size_t POP_SIZE, int len, bool** pop,bool** npop) {
 	ErrorInfo status;
 	size_t N = POP_SIZE * len;
 	float* dev_rnd;
@@ -505,10 +497,10 @@ ErrorInfo generatePOP(curandGenerator_t& generator, size_t POP_SIZE, int len, bo
 	status.cuda = cudaDeviceSynchronize();
 	cudaFree(dev_rnd);
 	return status;
-}
+}*/
 
-ErrorInfo GA(size_t POP_SIZE,int len,int iters,bool dpx_cross,float crossProb,float mutProb) {
-	unsigned long long seed = 42;
+ErrorInfo GA(size_t POP_SIZE,int len,int iters,bool dpx_cross,float crossProb,float mutProb,	unsigned long long seed) {
+	printf("not bitwise POP_SIZE=%u length=%d seed=%u\n", POP_SIZE, len, seed);
 	ErrorInfo status;
 	bool *pop, *npop;
 	int* fit;
@@ -589,8 +581,8 @@ ErrorInfo GA(size_t POP_SIZE,int len,int iters,bool dpx_cross,float crossProb,fl
 	return status;
 }
 
-ErrorInfo GA_bitwise(size_t POP_SIZE, int len, int iters, bool dpx_cross, float crossProb, float mutProb) {
-	unsigned long long seed = 42;
+ErrorInfo GA_bitwise(size_t POP_SIZE, int len, int iters, bool dpx_cross, float crossProb, float mutProb,unsigned long long seed) {
+	printf("bitwise(%u) POP_SIZE=%u length=%d seed=%u\n",sizeof(Data) * 8, POP_SIZE, len, seed);
 	ErrorInfo status;
 	Data *pop, *npop;
 	int* fit;
@@ -672,6 +664,91 @@ ErrorInfo GA_bitwise(size_t POP_SIZE, int len, int iters, bool dpx_cross, float 
 	return status;
 }
 
+#define VectorSize 16
+/*ErrorInfo GA_vectorized(size_t POP_SIZE, int length, int iters, bool dpx_cross, float crossProb, float mutProb) {
+	int len = length % VectorSize > 0 ? (1 + length / VectorSize) * VectorSize : length;
+	unsigned long long seed = 42;
+	ErrorInfo status;
+	bool *pop, *npop;
+	int* fit;
+	int* win;
+	int* tourn;
+	float  *probs;
+	int *points;
+	EvalInfo eval;
+	status.cuda = InitFit(&fit, POP_SIZE);
+	status.cuda = InitWin(&win, POP_SIZE);
+	status.cuda = InitTournRandom(&tourn, POP_SIZE);
+	status = initProbs(&probs, &points, POP_SIZE);
+
+	curandGenerator_t generator;
+	status.curand = initGenerator(generator, seed);
+	if (status.failed()) return status;
+
+
+	//status = generatePOP(generator, POP_SIZE, len, &pop,&npop);
+	// usa la curand device API para generar la poblacion sin prealocar numeros aleatorios para eso
+	status = generatePOP_device(seed, POP_SIZE, len, &pop, &npop);
+	//status = generatePOP_device(hash64shift(seed), POP_SIZE, len, &pop, &npop);
+
+	// cambia el offset del generador para que no se sobreponga con el usado para la generacion de la poblacion
+	curandSetGeneratorOffset(generator, POP_SIZE * len);
+
+	if (status.failed()) {
+		fprintf(stderr, "generatePOP failed!");
+		return status;
+	}
+
+
+	status = evaluate(pop, POP_SIZE, len, fit, eval);
+	if (SALIDA) printf("gen %d: Min: %f, Max: %f, Avg: %f\n", 0, eval.min, eval.max, eval.avg);
+
+	for (int gen = 1; gen <= iters; gen++) { // while not optimalSolutionFound
+											 // elegir POP_SIZE parejas para el torneo
+		status = makeRandomNumbersTournement(generator, POP_SIZE, tourn);
+		if (status.failed()) return status;
+
+		// elegir POP_SIZE ganadores
+		tournament << < POP_SIZE / MAX_THREADS_PER_BLOCK, MAX_THREADS_PER_BLOCK >> > (fit, tourn, win);
+		status.cuda = cudaGetLastError();
+		if (status.failed()) return status;
+
+		// seleccion
+		if (dpx_cross) {
+			makeRandomNumbersDpx(generator, POP_SIZE, len, probs, points);
+			dpx << < POP_SIZE / 2, MAX_THREADS_PER_BLOCK >> >(pop, npop, win, probs, points, len, crossProb);
+		}
+		else {
+			makeRandomNumbersSpx(generator, POP_SIZE, len, probs, points);
+			spx << < POP_SIZE / 2, MAX_THREADS_PER_BLOCK >> >(pop, npop, win, probs, points, len, crossProb);
+		}
+		status.cuda = cudaGetLastError();
+		if (status.failed()) return status;
+
+		status.cuda = cudaDeviceSynchronize();
+		if (status.failed()) return status;
+
+		// elegir numeros aleatorios para mutacion 
+		// se reusa la memoria que se uso para los numeros aleatorios de la seleccion
+		status = makeRandomNumbersMutation(generator, POP_SIZE, len, probs, points);
+
+		// mutacion
+		mutation << < POP_SIZE / MAX_THREADS_PER_BLOCK, MAX_THREADS_PER_BLOCK >> >(npop, probs, points, len, mutProb);
+		status.cuda = cudaGetLastError();
+		if (status.failed()) return status;
+		status.cuda = cudaDeviceSynchronize();
+
+		bool* tmp;
+		tmp = pop;
+		pop = npop;
+		npop = tmp;
+		status = evaluate(pop, POP_SIZE, len, fit, eval);
+		if (SALIDA && (gen % SALIDA_STEP) == 0) printf("gen %d: Min: %f, Max: %f, Avg: %f\n", gen, eval.min, eval.max, eval.avg);
+	}
+	return status;
+}*/
+
+
 
 int main()
 {
@@ -689,11 +766,11 @@ int main()
 	// TODO: arreglar para POP_SIZE no multiplo de MAX_THREADS
 	unsigned int POP_SIZE = 2048 ;
 	int len = 10000;
-	int iters = 1000; 
+	int iters = 2000; 
 	float pMutacion = 0.4;
 	float pCruce = 1;
-	
-	GA(POP_SIZE, len, iters, false, pCruce,pMutacion);
+	unsigned long long seed = 42;
+	GA_bitwise(POP_SIZE, len, iters, false, pCruce,pMutacion,seed);
 
 
 	// cudaDeviceReset must be called before exiting in order for profiling and

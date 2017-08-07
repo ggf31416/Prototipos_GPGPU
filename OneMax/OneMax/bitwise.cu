@@ -1,18 +1,9 @@
-
-
-
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
-
 #include <stdio.h>
-
-
 #include "curand_kernel.h"
 #include "bitwise.cuh"
 
-
-#define MAX_THREADS_PER_BLOCK 1024
-#define INIT_THREADS 128
 
 // Kernel invocation: fitness <<<POP_SIZE,MAX_THREADS_PER_BLOCK>>> (pgpu,fitgpu,REAL_LEN,MASK,CHROM_LEN);
 // POP_SIZE: number of individuals of the population.
@@ -262,14 +253,30 @@ __global__ void tournament_b(int * fit, int * random, int * win) {
     win[idx] = pos;
 }
 
-__global__ void initPop_device32_bitwise(Data *pop,  unsigned int dataLength, int length,unsigned long long seed) {
+
+/*__global__ void initPop_device(bool *pop, unsigned int length, unsigned long long seed) {
+	unsigned int thIdx = blockIdx.x * blockDim.x + threadIdx.x;
+	curandStatePhilox4_32_10_t rndState;
+	curand_init(seed + thIdx, 0ull, 0ull, &rndState);
+	for (unsigned int i = threadIdx.x; i < length; i = i + INIT_THREADS) {
+		unsigned int pos = blockIdx.x * length + i;
+		pop[pos] = (curand_uniform(&rndState) <= 0.5);
+	}
+}*/
+
+
+/*__global__ void initPop_device32_bitwise(Data *pop,  unsigned int dataLength, int length,unsigned long long seed) {
 	unsigned int thIdx = blockIdx.x * blockDim.x + threadIdx.x;
 	curandStatePhilox4_32_10_t rndState;
 	curand_init(seed + thIdx, 0ull, 0ull, &rndState);
 	unsigned int i;
 	for (i = threadIdx.x; i < dataLength; i++ ) {
 #if DataSize <= 32
+
 			uint32_t rnd = curand(&rndState);
+			for (int j = 0; j < DataSize / 8; j++) {
+
+			}
 			pop[blockIdx.x * dataLength + i] = (Data)(rnd & DataMask);
 #else
 			uint32_t rnd1 = curand(&rndState);
@@ -282,18 +289,51 @@ __global__ void initPop_device32_bitwise(Data *pop,  unsigned int dataLength, in
 	}
 	
 
+}*/
+
+#define datasize_bytes (DataSize / 8)
+#define posMask (datasize_bytes - 1)
+
+// inicializa la memoria con numeros aleatorios 8 booleanos contiguos a la vez 
+// de esta manera se podria asegurar que la inicializacion es la misma  para el caso no bitwise que bitwise sin tener que usar atomics en el caso bitwise
+// pues el tamaño en bits del no bitwise siempre tiene que ser multiplo de 8
+__global__ void initPop_device8_bitwise(Data *pop, unsigned int byteLength, int length, unsigned long long seed) {
+	unsigned int thIdx = blockIdx.x * blockDim.x + threadIdx.x;
+	curandStatePhilox4_32_10_t rndState;
+	curand_init(seed + thIdx, 0ull, 0ull, &rndState);
+	unsigned char *bytes = reinterpret_cast<unsigned char*>(pop);
+	// itera sobre los bytes de cada individuo de forma intercalada , avanzando cada thread de a INIT_THREADS bytes
+	for (unsigned int i = threadIdx.x; i < byteLength; i = i + INIT_THREADS) {
+
+		// setea la posicion tomando en cuanta que cuda (al igual que la mayoria de los cpu) usa little endian
+		// es decir si usa uint32_t los bytes quedan en el orden 3 2 1 0, no 0 1 2 3
+		unsigned int lastPos = i & posMask;
+		//unsigned int posEndian = (i / datasize_bytes) * datasize_bytes + (datasize_bytes - 1) - i % datasize_bytes;
+		unsigned int posEndian = (i - lastPos) + (posMask - lastPos);
+		unsigned int pos = blockIdx.x * byteLength + posEndian;
+		bytes[pos] = 0;
+		// por cada byte setear los bits
+		for (int j = 0; j < 8 & (i * 8 + j < length); j++) {
+			int shift = 7 - j;
+			float rnd = curand_uniform(&rndState);
+			unsigned char bit = (rnd <= 0.5) ? 1 : 0;
+			bytes[pos] += bit << shift;
+		}
+	}
 }
+
 
 ErrorInfo generatePOP_device_bitwise(unsigned long seed, size_t POP_SIZE, int len, Data** pop, Data** npop) {
 	ErrorInfo status;
 	uint64_t dataLen = (len + DataSize - 1) / DataSize;
+	uint64_t byteLen = dataLen * DataSize / 8;
 	size_t N = POP_SIZE * dataLen;
 	status.cuda = cudaMalloc(pop, N * sizeof(Data));
 	if (status.failed()) return status;
 	status.cuda = cudaMalloc(npop, N * sizeof(Data));
 	if (status.failed()) return status;
 	
-	initPop_device32_bitwise << < POP_SIZE, INIT_THREADS >> >(*pop, dataLen, seed);
+	initPop_device8_bitwise << < POP_SIZE, INIT_THREADS >> >(*pop, byteLen, len, seed);
 	status.cuda = cudaGetLastError();
 	if (status.failed()) return status;
 
