@@ -628,6 +628,7 @@ __global__ void tournament_b(float * fit, int * random, int * win) {
 #define datasize_bytes (DataSize / 8)
 #define posMask (datasize_bytes - 1)
 
+//INICIALIZACIÓN ADAPTATIVA
 // inicializa la memoria con numeros aleatorios 8 booleanos contiguos a la vez 
 // de esta manera se podria asegurar que la inicializacion es la misma  para el caso no bitwise que bitwise sin tener que usar atomics en el caso bitwise
 // pues el tamaño en bits del no bitwise siempre tiene que ser multiplo de 8

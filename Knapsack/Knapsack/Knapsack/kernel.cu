@@ -633,6 +633,8 @@ ErrorInfo GA(size_t POP_SIZE,int len,int iters,bool dpx_cross,float crossProb,fl
 	/*cudaEvent_t start, stop;
 	cudaEventCreate(&start);
 	cudaEventCreate(&stop);*/
+	double max_fitness;
+	int gen_max_fitness = 0;
 	if (dpx_cross) printf("DPX ");
 	else printf("SPX ");
 
@@ -676,6 +678,7 @@ ErrorInfo GA(size_t POP_SIZE,int len,int iters,bool dpx_cross,float crossProb,fl
 
 	
 	status = evaluate(pop, POP_SIZE, len,fit,eval,W,G);
+	max_fitness = eval.max;
 	if (SALIDA) printf("gen %d: Invalidos: %d, Max: %.1f, Avg: %f\n", 0, eval.invalidos, eval.max, eval.avg);
 
 	for (int gen = 1; gen <= iters; gen++) { // while not optimalSolutionFound
@@ -719,7 +722,12 @@ ErrorInfo GA(size_t POP_SIZE,int len,int iters,bool dpx_cross,float crossProb,fl
 		npop = tmp;
 		status = evaluate(pop, POP_SIZE, len, fit, eval, W, G);
 		if (SALIDA && (gen % SALIDA_STEP) == 0) printf("gen %d: Invalidos: %d, Max: %.1f, Avg: %f\n", gen, eval.invalidos, eval.max, eval.avg);
+		if (eval.max > max_fitness) {
+			gen_max_fitness = gen;
+			max_fitness = eval.max;
+		}
 	}
+	printf("Gen. max fitness: %d (%f)\n", gen_max_fitness, max_fitness);
 	return status;
 }
 
@@ -734,6 +742,9 @@ ErrorInfo GA_bitwise(size_t POP_SIZE, int len, int iters, bool dpx_cross, float 
 	int* tourn;
 	float  *probs;
 	int *points;
+
+	double max_fitness;
+	int gen_max_fitness = 0;
 
 	float *W;
 	float *G;
@@ -772,6 +783,7 @@ ErrorInfo GA_bitwise(size_t POP_SIZE, int len, int iters, bool dpx_cross, float 
 
 
 	status = evaluate_bitwise(pop, POP_SIZE, realLength,len, fit, eval,W,G);
+	max_fitness = eval.max;
 	if (SALIDA) printf("gen %d: Invalidos: %d, Max: %.1f, Avg: %f\n", 0, eval.invalidos, eval.max, eval.avg);
 
 	for (int gen = 1; gen <= iters; gen++) { // while not optimalSolutionFound
@@ -815,7 +827,12 @@ ErrorInfo GA_bitwise(size_t POP_SIZE, int len, int iters, bool dpx_cross, float 
 		npop = tmp;
 		status  = evaluate_bitwise(pop, POP_SIZE, realLength, len, fit, eval, W, G);
 		if (SALIDA && (gen % SALIDA_STEP) == 0) printf("gen %d: Invalidos: %d, Max: %1f, Avg: %f\n", gen, eval.invalidos, eval.max, eval.avg);
+		if (eval.max > max_fitness) {
+			gen_max_fitness = gen;
+			max_fitness = eval.max;
+		}
 	}
+	printf("Gen. max fitness: %d (%f)\n", gen_max_fitness, max_fitness);
 	return status;
 }
 
@@ -843,13 +860,13 @@ int main()
 	std::clock_t c_start = std::clock();
 
 	// TODO: arreglar para POP_SIZE no multiplo de MAX_THREADS
-	unsigned int POP_SIZE = 4096;
+	unsigned int POP_SIZE = 2048;
 	int len = 10000;
 	int iters = 10000;
 	float pMutacion =0.4;
 	float pCruce = 1;
 	unsigned long long seed = 2825521;
-	GA_bitwise(POP_SIZE, len, iters, false, pCruce,pMutacion,seed);
+	GA(POP_SIZE, len, iters, false, pCruce,pMutacion,seed);
 	std::clock_t c_end = std::clock();
 	double time_elapsed_ms = 1000.0 * (c_end - c_start) / CLOCKS_PER_SEC;
 
