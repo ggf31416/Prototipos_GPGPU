@@ -262,3 +262,33 @@ gen 10000: Invalidos: 978, Max: 7934.0, Avg: 4141.724609
 Gen. max fitness: 9726 (7934.000000)
 Tiempo total: 32.958s
 Presione una tecla para continuar . . .
+
+===============================================================================
+
+SPX not bitwise POP_SIZE=2048 length=10000 seed=2825521
+gen 0: Invalidos: 2048, Max: -6054.0, Avg: -6295.109375
+gen 500: Invalidos: 2048, Max: -2942.0, Avg: -2967.184082
+gen 1000: Invalidos: 2048, Max: -1511.0, Avg: -1529.208496
+gen 1500: Invalidos: 2048, Max: -418.0, Avg: -431.297852
+gen 2000: Invalidos: 437, Max: 4791.0, Avg: 3731.081543
+gen 2500: Invalidos: 503, Max: 6034.0, Avg: 4520.680176
+gen 3000: Invalidos: 528, Max: 6812.0, Avg: 5021.417969
+gen 3500: Invalidos: 588, Max: 7260.0, Avg: 5154.701660
+gen 4000: Invalidos: 569, Max: 7510.0, Avg: 5399.147949
+gen 4500: Invalidos: 645, Max: 7639.0, Avg: 5214.445313
+gen 5000: Invalidos: 600, Max: 7742.0, Avg: 5455.454102
+gen 5500: Invalidos: 629, Max: 7820.0, Avg: 5403.386230
+gen 6000: Invalidos: 698, Max: 7858.0, Avg: 5168.720215
+gen 6500: Invalidos: 774, Max: 7880.0, Avg: 4892.484375
+gen 7000: Invalidos: 845, Max: 7892.0, Avg: 4628.904785
+gen 7500: Invalidos: 816, Max: 7898.0, Avg: 4744.664551
+gen 8000: Invalidos: 874, Max: 7900.0, Avg: 4522.562988
+gen 8500: Invalidos: 768, Max: 7902.0, Avg: 4932.563477
+gen 9000: Invalidos: 838, Max: 7902.0, Avg: 4662.952637
+gen 9500: Invalidos: 848, Max: 7904.0, Avg: 4625.414063
+gen 10000: Invalidos: 851, Max: 7902.0, Avg: 4613.893066
+Gen. max fitness: 9549 (7906.000000)
+Tiempo total: 32.931s
+Presione una tecla para continuar . . .
+
+
