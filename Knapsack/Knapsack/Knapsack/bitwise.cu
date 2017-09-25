@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include "curand_kernel.h"
 #include "bitwise.cuh"
+
 #define UNROLL
 #define KNAPSACK
 #define SIMULTANEO 1

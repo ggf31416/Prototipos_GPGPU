@@ -3,7 +3,7 @@
 #include "curand.h"
 #include <stdio.h>
 #include "cuda.h"
-#include "defines_onemax.h"
+#include "defines_knapsack.h"
 
 static const char *curandGetErrorString(curandStatus_t error)
 {
