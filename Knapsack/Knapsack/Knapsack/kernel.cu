@@ -475,6 +475,7 @@ ErrorInfo evaluate_(size_t POP_SIZE, float* dev_fit, EvalInfo& eval,int gen) {
 	maximo << <nroBlocks, MAX_THREADS_PER_BLOCK >> >(dev_fit, out1, POP_SIZE);
 	maximo << <1, MAX_THREADS_PER_BLOCK >> >(out1, out1, nroBlocks);
 	cudaMemcpy(&maxFit, out1, sizeof(T_FIT), cudaMemcpyDeviceToHost);
+	eval.max = maxFit;
 
 	// hallar minimo
 	/*minimo << <nroBlocks, MAX_THREADS_PER_BLOCK >> >(dev_fit, out1, POP_SIZE);
@@ -511,10 +512,6 @@ ErrorInfo evaluate_(size_t POP_SIZE, float* dev_fit, EvalInfo& eval,int gen) {
 	cudaFree(out1);
 	cudaFree(out3);
 
-	avgFit = (avgFit / POP_SIZE);
-	eval.min = minFit; 
-	eval.max = maxFit;
-	eval.avg = avgFit;
 
 	if (mostrar) printInfo(gen, eval);
 
