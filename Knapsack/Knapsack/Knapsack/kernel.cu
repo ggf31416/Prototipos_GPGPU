@@ -511,12 +511,10 @@ ErrorInfo evaluate_(size_t POP_SIZE, float* dev_fit, EvalInfo& eval,int gen) {
 	cudaFree(out1);
 	cudaFree(out3);
 
-	avgFit = (avgFit / POP_SIZE);// / length;
-	eval.min = minFit; /// (double)length;
-	eval.max = maxFit;// / (double)length;
+	avgFit = (avgFit / POP_SIZE);
+	eval.min = minFit; 
+	eval.max = maxFit;
 	eval.avg = avgFit;
-	//eval.invalidos = (int)cantInv;
-	//if (SALIDA) printf("Min: %f, Max: %f, Avg: %f\n", minFit / (double)length,maxFit / (double) length, avgFit);
 
 	if (mostrar) printInfo(gen, eval);
 
