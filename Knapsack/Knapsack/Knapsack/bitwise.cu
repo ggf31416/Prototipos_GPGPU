@@ -453,85 +453,121 @@ __global__ void spx_b(Data *pop, Data *npop, int *pos, float *randomPC, int *ran
 // REAL_LEN = (CHROM_LEN%DataSize)==0?CHROM_LEN/DataSize:(CHROM_LEN/DataSize + 1) 
 // PROB_CROSS: crossover probability. 
 
-__global__ void dpx_b(Data *pop, Data *npop, int *pos, float *randomPC, int *randomPoint, int length, float PROB_CROSS){
+__global__ void dpx_b(Data *pop, Data *npop, int *pos, float *randomPC, int *randomPoint, int length, float PROB_CROSS) {
 
-   int idx = blockIdx.x;  // the number of the individual is indicated by the block number
-   int ind1 = pos[2*idx];  // index of first individual for crossover
-   int ind2 = pos[2*idx+1]; // index of second individual for crossover
-   float pc = randomPC[idx]; // value for crossover
-   int pnt1 = randomPoint[2*idx]; // first crossover point
-   int pnt2 = randomPoint[2*idx+1]; // second crossover point. pnt2 != pnt1
-   int word1 = pnt1/DataSize;     // word of the first crossover point
-   unsigned int wordPos1 = pnt1 % DataSize; // position in the word of the first crossover point 
-   int word2 = pnt2/DataSize;     // word of the second crossover point
-   unsigned int wordPos2 = pnt2 % DataSize; // position in the word of the second crossover point 
+	int idx = blockIdx.x;  // the number of the individual is indicated by the block number
+	int ind1 = pos[2 * idx];  // index of first individual for crossover
+	int ind2 = pos[2 * idx + 1]; // index of second individual for crossover
+	float pc = randomPC[idx]; // value for crossover
+	int pnt1 = randomPoint[2 * idx]; // first crossover point
+	int pnt2 = randomPoint[2 * idx + 1]; // second crossover point. pnt2 != pnt1
 
-   int i;
+#if ORDEN_DPX
+	pnt1 = min(pnt1, pnt2);
+	pnt2 = max(pnt1, pnt2);
+#endif // ORDEN_DPX
+	if (pnt1 == pnt2) {
+		if (pnt1 > 0) pnt1--;
+		else pnt2++;
+	}
 
-   if (pc <= PROB_CROSS) {
-       // Cross individuals
-       if (word1!=word2) { 
-          unsigned int move;
-          for(i=threadIdx.x;i<length;i=i+MAX_THREADS_PER_BLOCK) {
-             if (i<word1 || i>word2 || (i==word2 && wordPos2==0)) {
-	        //copy word from parent ind1 to child 2*idx
-	        npop[2*idx*length+i] = pop[ind1*length+i];
-		//copy word from parent ind2 to child 2*idx + 1
- 		npop[(2*idx+1)*length+i] = pop[ind2*length+i];
-	     } else if (i==word1 && wordPos1 > 0) {
-                 // the word has to be shifted  
-       		 move = DataSize -  wordPos1;
-    		 npop[2*idx*length+i] = ((Data)(pop[ind1*length+i] >> move) << move) | ((Data)(pop[ind2*length+i] << wordPos1) >>  wordPos1);
-		 npop[(2*idx+1)*length+i] = ((Data)(pop[ind2*length+i] >> move) << move) | ((Data)(pop[ind1*length+i] << wordPos1) >> wordPos1);
-	     } else if (i==word2 && wordPos2 > 0) {
-		 // the word has to be shifted
-                 move = DataSize -  wordPos2;
-		 npop[2*idx*length+i] = ((Data)(pop[ind2*length+i] >> move) << move) | ((Data)(pop[ind1*length+i] << wordPos2) >>  wordPos2);
-		 npop[(2*idx+1)*length+i] = ((Data)(pop[ind1*length+i] >> move) << move) | ((Data)(pop[ind2*length+i] << wordPos2) >>  wordPos2);
-	     } else {
-                 //copy word from parent ind2 to child 2*idx	       		    
-                 npop[2*idx*length+i] = pop[ind2*length+i];
-		 //copy word from parent ind1 to child 2*idx + 1
-	         npop[(2*idx+1)*length+i] = pop[ind1*length+i];
-	     }
-          }
-       } else { // wordPos1 != wordPos2 since pnt2 != pnt1
-              for(i=threadIdx.x;i<length;i=i+MAX_THREADS_PER_BLOCK) {
-                  if (i<word1) {
-                    //copy word from parent ind1 to child 2*idx
-	            npop[2*idx*length+i] = pop[ind1*length+i];
-		    //copy word from parent ind2 to child 2*idx + 1
- 		    npop[(2*idx+1)*length+i] = pop[ind2*length+i];
-	          } else if (i==word1) {
-                    // the word has to be shifted 
-                    unsigned int move = DataSize - wordPos1; 
-	            unsigned int move2 = DataSize - wordPos2;
-	       	    Data rest1 = ((Data)(pop[ind2*length+i] << wordPos1) >>  wordPos1);
-	       	    Data rest2 = ((Data)(pop[ind1*length+i] << wordPos1) >>  wordPos1);
-                    if (wordPos1!=0) {
-                        npop[2*idx*length+i] = ((Data)(pop[ind1*length+i] >> move) << move) | ((Data)(rest1 >> move2) << move2) | ((Data)(rest2 << wordPos2) >>  wordPos2);
-		        npop[(2*idx+1)*length+i] = ((Data)(pop[ind2*length+i] >> move) << move) | ((Data)(rest2 >> move2) << move2) | ((Data)(rest1 << wordPos2) >>  wordPos2);
-		     } else {
- 		        npop[2*idx*length+i] = ((Data)(rest1 >> move2) << move2) | ((Data)(rest2 << wordPos2) >>  wordPos2);
-  			npop[(2*idx+1)*length+i] = ((Data)(rest2 >> move2) << move2) | ((Data)(rest1 << wordPos2) >>  wordPos2);
-                     }
-	          } else {
-                      //copy word from parent ind2 to child 2*idx	       		    
-                      npop[2*idx*length+i] = pop[ind2*length+i];
-		      //copy word from parent ind1 to child 2*idx + 1
-	              npop[(2*idx+1)*length+i] = pop[ind1*length+i];
-	          }
-              }
-      }
-   } else {
-       // Copy individuals
-       for(i=threadIdx.x;i<length;i=i+MAX_THREADS_PER_BLOCK) {
-         //copy word from parent ind1 to child 2*idx
-	 npop[(2*idx)*length+i] = pop[ind1*length+i];
-	 //copy word from parent ind2 to child 2*idx + 1
-	 npop[(2*idx+1)*length+i] = pop[ind2*length+i];
-     }
-   }
+	int word1 = pnt1 / DataSize;     // word of the first crossover point
+	unsigned int wordPos1 = pnt1 % DataSize; // position in the word of the first crossover point 
+	int word2 = pnt2 / DataSize;     // word of the second crossover point
+	unsigned int wordPos2 = pnt2 % DataSize; // position in the word of the second crossover point 
+
+
+	int i;
+
+	if (pc <= PROB_CROSS) {
+		// Cross individuals
+		if (word1 != word2) {
+			// los puntos de cruce estan en palabras distintas
+			unsigned int move;
+			for (i = threadIdx.x;i < length;i = i + MAX_THREADS_PER_BLOCK) {
+				if (i<word1 || i>word2 || (i == word2 && wordPos2 == 0)) {
+					//copy word from parent ind1 to child 2*idx
+					npop[2 * idx*length + i] = pop[ind1*length + i];
+					//copy word from parent ind2 to child 2*idx + 1
+					npop[(2 * idx + 1)*length + i] = pop[ind2*length + i];
+				}
+				else if (i == word1 && wordPos1 > 0) { // primer punto de cruce, combino las palabras de ambos individuos
+					 // the word has to be shifted  
+					move = DataSize - wordPos1;
+					// 1er hijo: Los wordsPos1 bits superiores  son los del 1er individuo, mientras que los (DataSize - wordPos1) inferiores son del 2do individuo
+					// 1er hijo: | 1er padre | 2do padre |
+					npop[2 * idx*length + i] = ((Data)(pop[ind1*length + i] >> move) << move) | ((Data)(pop[ind2*length + i] << wordPos1) >> wordPos1);
+					// 2do ijo: Los wordsPos1 bits superiores  son los del 2do individuo, mientras que los (DataSize - wordPos1) inferiores son del 1er individuo
+					// 2do hijo: | 2do padre | 1er padre |
+					npop[(2 * idx + 1)*length + i] = ((Data)(pop[ind2*length + i] >> move) << move) | ((Data)(pop[ind1*length + i] << wordPos1) >> wordPos1);
+				}
+				else if (i == word2 && wordPos2 > 0) { // segundo punto de cruce
+			 // the word has to be shifted
+					move = DataSize - wordPos2;
+					// 1er hijo: Los wordPos2 bits superiores son del 2do individuo, mientras que los (DataSize - wordPos2) inferiores son del 1er individuo
+					npop[2 * idx*length + i] = ((Data)(pop[ind2*length + i] >> move) << move) | ((Data)(pop[ind1*length + i] << wordPos2) >> wordPos2);
+					// 2do hijo: Los wordPos2 bits superiores son del 1er individuo, mientras que los (DataSize - wordPos2) inferiores son del 2do individuo
+					npop[(2 * idx + 1)*length + i] = ((Data)(pop[ind1*length + i] >> move) << move) | ((Data)(pop[ind2*length + i] << wordPos2) >> wordPos2);
+				}
+				else {
+					//copy word from parent ind2 to child 2*idx	       		    
+					npop[2 * idx*length + i] = pop[ind2*length + i];
+					//copy word from parent ind1 to child 2*idx + 1
+					npop[(2 * idx + 1)*length + i] = pop[ind1*length + i];
+				}
+			}
+		}
+		else { // wordPos1 != wordPos2 since pnt2 != pnt1
+			// ambos puntos de cruce estan en la misma palabra
+			for (i = threadIdx.x;i < length;i = i + MAX_THREADS_PER_BLOCK) {
+				if (i < word1) {
+					//copy word from parent ind1 to child 2*idx
+					npop[2 * idx*length + i] = pop[ind1*length + i];
+					//copy word from parent ind2 to child 2*idx + 1
+					npop[(2 * idx + 1)*length + i] = pop[ind2*length + i];
+				}
+				else if (i == word1) {
+					// the word has to be shifted 
+					unsigned int move = DataSize - wordPos1;
+					unsigned int move2 = DataSize - wordPos2;
+					// rest1 = (DataSize - wordPos1) bits inferiores del individuo 2
+					Data rest1 = ((Data)(pop[ind2*length + i] << wordPos1) >> wordPos1);
+					// rest2 = (DataSize - wordPos1) bits inferiores del individuo 1
+					Data rest2 = ((Data)(pop[ind1*length + i] << wordPos1) >> wordPos1);
+					if (wordPos1 != 0) {
+						// hijo1: | padre1 (wp1) bits sup | padre 2 (DS - wp1 - wp2) del medio | padre 1 (wp2) bits inferiores |
+						npop[2 * idx*length + i] = ((Data)(pop[ind1*length + i] >> move) << move) | 
+													((Data)(rest1 >> move2) << move2) |
+													((Data)(rest2 << wordPos2) >> wordPos2);
+
+						// hijo2: | padre2 (wp1) bits sup | padre 2 (DS - wp1 - wp2) del medio | padre 1 (DS - wp1 - wp2) bits inferiores |
+						npop[(2 * idx + 1)*length + i] = ((Data)(pop[ind2*length + i] >> move) << move) |
+														((Data)(rest2 >> move2) << move2) |
+														((Data)(rest1 << wordPos2) >> wordPos2);
+					}
+					else {
+						npop[2 * idx*length + i] = ((Data)(rest1 >> move2) << move2) | ((Data)(rest2 << wordPos2) >> wordPos2);
+						npop[(2 * idx + 1)*length + i] = ((Data)(rest2 >> move2) << move2) | ((Data)(rest1 << wordPos2) >> wordPos2);
+					}
+				}
+				else {
+					//copy word from parent ind2 to child 2*idx	       		    
+					npop[2 * idx*length + i] = pop[ind2*length + i];
+					//copy word from parent ind1 to child 2*idx + 1
+					npop[(2 * idx + 1)*length + i] = pop[ind1*length + i];
+				}
+			}
+		}
+	}
+	else {
+		// Copy individuals
+		for (i = threadIdx.x;i < length;i = i + MAX_THREADS_PER_BLOCK) {
+			//copy word from parent ind1 to child 2*idx
+			npop[(2 * idx)*length + i] = pop[ind1*length + i];
+			//copy word from parent ind2 to child 2*idx + 1
+			npop[(2 * idx + 1)*length + i] = pop[ind2*length + i];
+		}
+	}
 }
 
 

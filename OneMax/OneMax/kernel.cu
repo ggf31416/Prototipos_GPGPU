@@ -770,7 +770,7 @@ int main()
 	float pMutacion = 0.4;
 	float pCruce = 1;
 	unsigned long long seed = 42;
-	GA_bitwise(POP_SIZE, len, iters, false, pCruce,pMutacion,seed);
+	GA_bitwise(POP_SIZE, len, iters, true, pCruce,pMutacion,seed);
 
 
 	// cudaDeviceReset must be called before exiting in order for profiling and

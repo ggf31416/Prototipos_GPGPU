@@ -4,7 +4,7 @@
 
 // The constant DataSize should be defined as 8 (if Data is unsigned char), 16 (if Data is unsigned short), 
 // 32 (if Data is unsigned int) or 64 (if Data is unsigned long).
-#define DataSize 32
+#define DataSize 64
 
 // The datatype Data should be defined as unsigned char, unsigned short, unsigned int or unsigned long.
 #if DataSize == 8

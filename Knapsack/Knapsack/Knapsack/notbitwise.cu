@@ -148,6 +148,15 @@ __global__ void dpx(bool *pop, bool *npop, int *pos, float *randomPC, int *rando
 	int pnt2 = randomPoint[2 * idx + 1]; // second crossover point
 	int i;
 
+#if ORDEN_DPX
+	pnt1 = min(pnt1, pnt2);
+	pnt2 = max(pnt1, pnt2);
+#endif // ORDEN_DPX
+	if (pnt1 == pnt2) {
+		if (pnt1 > 0) pnt1--;
+		else pnt2++;
+	}
+
 	if (pc <= PROB_CROSS) {
 		// Cross individuals
 		for (i = threadIdx.x;i<length;i = i + MAX_THREADS_PER_BLOCK) {
