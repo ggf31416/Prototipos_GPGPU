@@ -439,9 +439,14 @@ int cantInvalidosHost(float* fitness, size_t SIZE) {
 	return total;
 }
 
-// evaluate comun
-ErrorInfo evaluate_(size_t POP_SIZE, float* dev_fit, EvalInfo& eval) {
+void printInfo(int gen, const EvalInfo& eval) {
+	printf("gen %d: Inval: %d, AvgP: %.2f, MinV: %.0f, AvgV: %.1f, Max: %.0f\n", gen, eval.invalidos, eval.avgPenal, eval.minValido, eval.avgValido, eval.max);
+}
 
+// evaluate comun
+ErrorInfo evaluate_(size_t POP_SIZE, float* dev_fit, EvalInfo& eval,int gen) {
+
+	bool mostrar = (SALIDA && (gen % SALIDA_STEP) == 0);
 	ErrorInfo status;
 	float avgFit, avgFitVal, minFitVal;
 	T_FIT minFit, maxFit;
@@ -458,47 +463,43 @@ ErrorInfo evaluate_(size_t POP_SIZE, float* dev_fit, EvalInfo& eval) {
 
 
 	float* out1;
-	float* out2;
 	float* out3;
 
 	int nroBlocks = (POP_SIZE + MAX_THREADS_PER_BLOCK - 1) / (MAX_THREADS_PER_BLOCK);
 	cudaMalloc(&out1, nroBlocks * sizeof(float));
-	cudaMalloc(&out2, nroBlocks * sizeof(float));
 	cudaMalloc(&out3, STAT_SIZE);
 
-	// hallar minimo
-	minimo << <nroBlocks, MAX_THREADS_PER_BLOCK >> >(dev_fit, out1, POP_SIZE);
-	minimo << <1, MAX_THREADS_PER_BLOCK >> >(out1, out1, nroBlocks);
-	cudaMemcpy(&minFit, out1, sizeof(T_FIT), cudaMemcpyDeviceToHost);
+	
 
-	// hallar maximo
+	// hallar maximo (se calcula siempre para conocer mejor iteracion)
 	maximo << <nroBlocks, MAX_THREADS_PER_BLOCK >> >(dev_fit, out1, POP_SIZE);
 	maximo << <1, MAX_THREADS_PER_BLOCK >> >(out1, out1, nroBlocks);
 	cudaMemcpy(&maxFit, out1, sizeof(T_FIT), cudaMemcpyDeviceToHost);
 
+	// hallar minimo
+	/*minimo << <nroBlocks, MAX_THREADS_PER_BLOCK >> >(dev_fit, out1, POP_SIZE);
+	minimo << <1, MAX_THREADS_PER_BLOCK >> >(out1, out1, nroBlocks);
+	cudaMemcpy(&minFit, out1, sizeof(T_FIT), cudaMemcpyDeviceToHost);*/
+
 	// promedio
-	sumar << <nroBlocks, MAX_THREADS_PER_BLOCK >> >(dev_fit, out2, POP_SIZE);
-	sumar << <1, MAX_THREADS_PER_BLOCK >> >(out2, out2, nroBlocks);
-	cudaMemcpy(&avgFit, out2, sizeof(float), cudaMemcpyDeviceToHost);
+	/*sumar << <nroBlocks, MAX_THREADS_PER_BLOCK >> >(dev_fit, out1, POP_SIZE);
+	sumar << <1, MAX_THREADS_PER_BLOCK >> >(out1, out1, nroBlocks);
+	cudaMemcpy(&avgFit, out2, sizeof(float), cudaMemcpyDeviceToHost);*/
 
+	// calcular otras estadisticas solo si se muestran
+	if (mostrar) {
+		// cant invalidos, promedio validos e invalidos
+		sumarValidez << <1, MAX_THREADS_PER_BLOCK >> >(dev_fit, out3, POP_SIZE);
+		cudaMemcpy(&host_stats, out3, STAT_SIZE, cudaMemcpyDeviceToHost);
+		eval.invalidos = host_stats[0];
+		eval.avgPenal = eval.invalidos > 0 ? host_stats[1] / eval.invalidos : 0;
+		eval.avgValido = eval.invalidos < POP_SIZE ? host_stats[2] / (POP_SIZE - eval.invalidos) : 0;
 
-	// contar Invalidos
-	/*contarInvalidos << <1, MAX_THREADS_PER_BLOCK >> >(dev_fit, out2, POP_SIZE);
-	cudaMemcpy(&cantInv, out2, sizeof(float), cudaMemcpyDeviceToHost);
-	eval.invalidos = cantInv;*/
-
-	// cant invalidos, promedio validos e invalidos
-	sumarValidez << <1, MAX_THREADS_PER_BLOCK >> >(dev_fit, out3, POP_SIZE);
-	cudaMemcpy(&host_stats, out3, STAT_SIZE, cudaMemcpyDeviceToHost);
-	eval.invalidos = host_stats[0];
-	eval.avgPenal = eval.invalidos > 0 ? host_stats[1] / eval.invalidos : 0;
-	eval.avgValido = eval.invalidos < POP_SIZE ? host_stats[2] / (POP_SIZE - eval.invalidos) : 0;
-	//cudaFreeHost(host_stats);
-
-	// minimo validos
-	minimoValidos << <1, MAX_THREADS_PER_BLOCK >> >(dev_fit, out2, POP_SIZE);
-	cudaMemcpy(&minFitVal, out2, sizeof(float), cudaMemcpyDeviceToHost);
-	eval.minValido = minFitVal;
+		// minimo validos
+		minimoValidos << <1, MAX_THREADS_PER_BLOCK >> >(dev_fit, out1, POP_SIZE);
+		cudaMemcpy(&minFitVal, out1, sizeof(float), cudaMemcpyDeviceToHost);
+		eval.minValido = minFitVal;
+	}
 
 	status.cuda = cudaGetLastError();
 	if (status.failed()) return status;
@@ -508,7 +509,6 @@ ErrorInfo evaluate_(size_t POP_SIZE, float* dev_fit, EvalInfo& eval) {
 
 
 	cudaFree(out1);
-	cudaFree(out2);
 	cudaFree(out3);
 
 	avgFit = (avgFit / POP_SIZE);// / length;
@@ -518,12 +518,14 @@ ErrorInfo evaluate_(size_t POP_SIZE, float* dev_fit, EvalInfo& eval) {
 	//eval.invalidos = (int)cantInv;
 	//if (SALIDA) printf("Min: %f, Max: %f, Avg: %f\n", minFit / (double)length,maxFit / (double) length, avgFit);
 
+	if (mostrar) printInfo(gen, eval);
+
 	return status;
 
 }
 
 
-ErrorInfo evaluate(bool* pop, size_t POP_SIZE, int length,float* dev_fit,EvalInfo& eval, float* W, float* G) {
+ErrorInfo evaluate(bool* pop, size_t POP_SIZE, int length,float* dev_fit,EvalInfo& eval, float* W, float* G,int gen) {
 
 	cudaEvent_t startFitness, stopFitness;
 	cudaEventCreate(&startFitness);
@@ -535,11 +537,11 @@ ErrorInfo evaluate(bool* pop, size_t POP_SIZE, int length,float* dev_fit,EvalInf
 	float milisecsFitness = 0;
 	cudaEventElapsedTime(&milisecsFitness, startFitness, stopFitness);
 	
-	return evaluate_(POP_SIZE, dev_fit, eval);
+	return evaluate_(POP_SIZE, dev_fit, eval,gen);
 }
 
 
-ErrorInfo evaluate_bitwise(Data* pop, size_t POP_SIZE, int realLength,int length, float* dev_fit, EvalInfo& eval,float* W, float* G) {
+ErrorInfo evaluate_bitwise(Data* pop, size_t POP_SIZE, int realLength,int length, float* dev_fit, EvalInfo& eval,float* W, float* G,int gen) {
 	cudaEvent_t startFitness, stopFitness;
 	cudaEventCreate(&startFitness);
 	cudaEventCreate(&stopFitness);
@@ -550,7 +552,7 @@ ErrorInfo evaluate_bitwise(Data* pop, size_t POP_SIZE, int realLength,int length
 	float milisecsFitness = 0;
 	cudaEventElapsedTime(&milisecsFitness, startFitness, stopFitness);
 
-	return evaluate_(POP_SIZE, dev_fit, eval);
+	return evaluate_(POP_SIZE, dev_fit, eval,gen);
 
 }
 
@@ -626,9 +628,7 @@ void generarAleatorioPacket(curandGenerator_t& generator, size_t bytes, void* bu
 	curandGenerate(generator, ptr, N);
 }
 
-void printInfo(int gen,const EvalInfo& eval ) {
-	printf("gen %d: Inval: %d, AvgP: %.2f, MinV: %.0f, AvgV: %.1f, Max: %.0f\n", gen, eval.invalidos, eval.avgPenal, eval.minValido, eval.avgValido, eval.max);
-}
+
 
 ErrorInfo GA(size_t POP_SIZE,int len,int iters,bool dpx_cross,float crossProb,float mutProb,	unsigned long long seed) {
 	/*cudaEvent_t start, stop;
@@ -677,12 +677,12 @@ ErrorInfo GA(size_t POP_SIZE,int len,int iters,bool dpx_cross,float crossProb,fl
 		return status;
 	}
 
-	
-	status = evaluate(pop, POP_SIZE, len,fit,eval,W,G);
+	int gen = 0;
+	status = evaluate(pop, POP_SIZE, len,fit,eval,W,G,gen);
 	max_fitness = eval.max;
-	if (SALIDA) printInfo(0,eval);
 
-	for (int gen = 1; gen <= iters; gen++) { // while not optimalSolutionFound
+
+	for ( gen = 1; gen <= iters; gen++) { // while not optimalSolutionFound
 		// elegir POP_SIZE parejas para el torneo
 		status = makeRandomNumbersTournement(generator, POP_SIZE, tourn);
 		if (status.failed()) return status;
@@ -721,8 +721,8 @@ ErrorInfo GA(size_t POP_SIZE,int len,int iters,bool dpx_cross,float crossProb,fl
 		tmp = pop;
 		pop = npop;
 		npop = tmp;
-		status = evaluate(pop, POP_SIZE, len, fit, eval, W, G);
-		if (SALIDA && (gen % SALIDA_STEP) == 0) printInfo(gen, eval);
+		status = evaluate(pop, POP_SIZE, len, fit, eval, W, G,gen);
+		
 		if (eval.max > max_fitness) {
 			gen_max_fitness = gen;
 			max_fitness = eval.max;
@@ -782,12 +782,11 @@ ErrorInfo GA_bitwise(size_t POP_SIZE, int len, int iters, bool dpx_cross, float 
 		return status;
 	}
 
-
-	status = evaluate_bitwise(pop, POP_SIZE, realLength,len, fit, eval,W,G);
+	int gen = 0;
+	status = evaluate_bitwise(pop, POP_SIZE, realLength,len, fit, eval,W,G,gen);
 	max_fitness = eval.max;
-	if (SALIDA)  printInfo(0, eval);
 
-	for (int gen = 1; gen <= iters; gen++) { // while not optimalSolutionFound
+	for ( gen = 1; gen <= iters; gen++) { // while not optimalSolutionFound
 											 // elegir POP_SIZE parejas para el torneo
 		status = makeRandomNumbersTournement(generator, POP_SIZE, tourn);
 		if (status.failed()) return status;
@@ -826,8 +825,8 @@ ErrorInfo GA_bitwise(size_t POP_SIZE, int len, int iters, bool dpx_cross, float 
 		tmp = pop;
 		pop = npop;
 		npop = tmp;
-		status  = evaluate_bitwise(pop, POP_SIZE, realLength, len, fit, eval, W, G);
-		if (SALIDA && (gen % SALIDA_STEP) == 0) printInfo(gen, eval);
+		status  = evaluate_bitwise(pop, POP_SIZE, realLength, len, fit, eval, W, G,gen);
+
 		if (eval.max > max_fitness) {
 			gen_max_fitness = gen;
 			max_fitness = eval.max;
