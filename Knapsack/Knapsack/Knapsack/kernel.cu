@@ -42,6 +42,8 @@ struct EvalInfo {
 	int invalidos;
 };
 
+float timeFitness, timeCross;
+
 template<typename T>
 __global__ void sumar(T* dev_rnd, float* dev_output,unsigned int len)
 {
@@ -61,49 +63,6 @@ __global__ void sumar(T* dev_rnd, float* dev_output,unsigned int len)
 		dev_output[blockIdx.x] = intermedio[0];
 	}
 }
-
-
-/*template<typename T>
-__global__ void contarInvalidos(T* fitness, float* dev_output, unsigned int pop_size)
-{
-	__shared__ float intermedio[MAX_THREADS_PER_BLOCK];
-	unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
-	unsigned int tid = threadIdx.x;
-	intermedio[threadIdx.x] = idx < pop_size ? 1 : 0;
-	__syncthreads();
-	for (unsigned int s = blockDim.x / 2; s != 0; s >>= 1) {
-		if (tid < s) {
-			intermedio[tid] += intermedio[tid + s];
-		}
-		__syncthreads();
-	}
-	__syncthreads();
-	if (threadIdx.x == 0) {
-		dev_output[blockIdx.x] = intermedio[0];
-	}
-}*/
-
-
-
-// sumar mas optimizado pero mas rigido
-/*__global__ void sumar2(float* dev_rnd, float* dev_output)
-{
-	extern __shared__ float intermedio[];
-	unsigned int idx = blockIdx.x * blockDim.x * 2 + threadIdx.x;
-	unsigned int tid = threadIdx.x;
-	intermedio[threadIdx.x] = dev_rnd[idx] + dev_rnd[idx + blockDim.x];
-	__syncthreads();
-	for (unsigned int s = blockDim.x / 2; s != 0; s >>= 1) {
-		if (tid < s) {
-			intermedio[tid] += intermedio[tid + s];
-		}
-		__syncthreads();
-	}
-	__syncthreads();
-	if (threadIdx.x == 0) {
-		dev_output[blockIdx.x] = intermedio[0];
-	}
-}*/
 
 __global__ void minimo(float* dev_rnd, float* dev_output,unsigned int len)
 {
@@ -458,8 +417,7 @@ ErrorInfo evaluate_(size_t POP_SIZE, float* dev_fit, EvalInfo& eval,int gen) {
 	status.cuda = cudaGetLastError();
 	if (status.failed()) return status;
 
-	status.cuda = cudaDeviceSynchronize();
-	if (status.failed()) return status;
+
 
 
 	float* out1;
@@ -520,33 +478,47 @@ ErrorInfo evaluate_(size_t POP_SIZE, float* dev_fit, EvalInfo& eval,int gen) {
 }
 
 
-ErrorInfo evaluate(bool* pop, size_t POP_SIZE, int length,float* dev_fit,EvalInfo& eval, float* W, float* G,int gen) {
+ErrorInfo evaluate(bool* pop, size_t POP_SIZE, int length,float* dev_fit,EvalInfo& eval, float* W, float* G,int gen, float MAX_WEIGHT) {
 
 	cudaEvent_t startFitness, stopFitness;
+#if KERNEL_TIMING
 	cudaEventCreate(&startFitness);
 	cudaEventCreate(&stopFitness);
 
 	cudaEventRecord(startFitness);
+#endif  // KERNEL_TIMING
 	fitness_knapsack << < POP_SIZE, MAX_THREADS_PER_BLOCK >> > (pop, dev_fit, length, W, G, MAX_WEIGHT, PENAL);
+	cudaDeviceSynchronize();
+#if KERNEL_TIMING
 	cudaEventRecord(stopFitness);
+	cudaEventSynchronize(stopFitness);
 	float milisecsFitness = 0;
 	cudaEventElapsedTime(&milisecsFitness, startFitness, stopFitness);
-	
+	timeFitness += milisecsFitness;
+#endif  // KERNEL_TIMING
+
 	return evaluate_(POP_SIZE, dev_fit, eval,gen);
 }
 
 
-ErrorInfo evaluate_bitwise(Data* pop, size_t POP_SIZE, int realLength,int length, float* dev_fit, EvalInfo& eval,float* W, float* G,int gen) {
+ErrorInfo evaluate_bitwise(Data* pop, size_t POP_SIZE, int realLength,int length, float* dev_fit, EvalInfo& eval,float* W, float* G,int gen,float MAX_WEIGHT) {
 	cudaEvent_t startFitness, stopFitness;
+#if KERNEL_TIMING
 	cudaEventCreate(&startFitness);
 	cudaEventCreate(&stopFitness);
 
 	cudaEventRecord(startFitness);
+#endif  // KERNEL_TIMING
 	fitness_knapsack_b << < POP_SIZE, MAX_THREADS_PER_BLOCK >> > (pop, dev_fit, length,realLength, FirstBitMask, W, G, MAX_WEIGHT, PENAL);
+	cudaDeviceSynchronize();
+#if KERNEL_TIMING
 	cudaEventRecord(stopFitness);
+	cudaEventSynchronize(stopFitness);
+
 	float milisecsFitness = 0;
 	cudaEventElapsedTime(&milisecsFitness, startFitness, stopFitness);
-
+	timeFitness += milisecsFitness;
+#endif
 	return evaluate_(POP_SIZE, dev_fit, eval,gen);
 
 }
@@ -625,7 +597,7 @@ void generarAleatorioPacket(curandGenerator_t& generator, size_t bytes, void* bu
 
 
 
-ErrorInfo GA(size_t POP_SIZE,int len,int iters,bool dpx_cross,float crossProb,float mutProb,	unsigned long long seed) {
+ErrorInfo GA(size_t POP_SIZE,int len,int iters,bool dpx_cross,float crossProb,float mutProb,	unsigned long long seed, float MAX_WEIGHT) {
 	/*cudaEvent_t start, stop;
 	cudaEventCreate(&start);
 	cudaEventCreate(&stop);*/
@@ -673,7 +645,7 @@ ErrorInfo GA(size_t POP_SIZE,int len,int iters,bool dpx_cross,float crossProb,fl
 	}
 
 	int gen = 0;
-	status = evaluate(pop, POP_SIZE, len,fit,eval,W,G,gen);
+	status = evaluate(pop, POP_SIZE, len,fit,eval,W,G,gen,MAX_WEIGHT);
 	max_fitness = eval.max;
 
 
@@ -683,17 +655,28 @@ ErrorInfo GA(size_t POP_SIZE,int len,int iters,bool dpx_cross,float crossProb,fl
 		if (status.failed()) return status;
 
 		// elegir POP_SIZE ganadores
-		tournament<<< POP_SIZE / MAX_THREADS_PER_BLOCK, MAX_THREADS_PER_BLOCK>>> (fit, tourn, win);
+		tournament<<< POP_SIZE / MAX_THREADS_PER_BLOCK, MAX_THREADS_PER_BLOCK>>> (fit, tourn, win,POP_SIZE);
 		status.cuda = cudaGetLastError();
 		if (status.failed()) return status;
 
 		// seleccion
 		if (dpx_cross) {
 			makeRandomNumbersDpx(generator, POP_SIZE, len, probs, points);
-			dpx << < POP_SIZE / 2, MAX_THREADS_PER_BLOCK >> >(pop, npop, win, probs, points, len, crossProb);
 		}
 		else {
 			makeRandomNumbersSpx(generator, POP_SIZE, len, probs, points);
+		}
+#if KERNEL_TIMING
+		cudaEvent_t startCross, stopCross;
+		cudaEventCreate(&startCross);
+		cudaEventCreate(&stopCross);
+
+		cudaEventRecord(startCross);
+#endif // KERNEL_TIMING
+		if (dpx_cross){
+			dpx << < POP_SIZE / 2, MAX_THREADS_PER_BLOCK >> >(pop, npop, win, probs, points, len, crossProb);
+		}
+		else {
 			spx << < POP_SIZE / 2, MAX_THREADS_PER_BLOCK >> >(pop, npop, win, probs, points, len, crossProb);
 		}
 		status.cuda = cudaGetLastError();
@@ -701,13 +684,20 @@ ErrorInfo GA(size_t POP_SIZE,int len,int iters,bool dpx_cross,float crossProb,fl
 
 		status.cuda = cudaDeviceSynchronize();
 		if (status.failed()) return status;
+#if KERNEL_TIMING
+		cudaEventRecord(stopCross);
+		cudaEventSynchronize(stopCross);
+		float milisecs = 0;
+		cudaEventElapsedTime(&milisecs, startCross, stopCross);
+		timeCross += milisecs;
+#endif // KERNEL_TIMING
 
 		// elegir numeros aleatorios para mutacion 
 		// se reusa la memoria que se uso para los numeros aleatorios de la seleccion
 		status = makeRandomNumbersMutation(generator, POP_SIZE, len, probs, points);
 
 		// mutacion
-		mutation << < POP_SIZE / MAX_THREADS_PER_BLOCK, MAX_THREADS_PER_BLOCK >> >(npop, probs, points, len, mutProb);
+		mutation << < POP_SIZE / MAX_THREADS_PER_BLOCK, MAX_THREADS_PER_BLOCK >> >(npop, probs, points, len, mutProb,POP_SIZE);
 		status.cuda = cudaGetLastError();
 		if (status.failed()) return status;
 		status.cuda = cudaDeviceSynchronize();
@@ -716,7 +706,7 @@ ErrorInfo GA(size_t POP_SIZE,int len,int iters,bool dpx_cross,float crossProb,fl
 		tmp = pop;
 		pop = npop;
 		npop = tmp;
-		status = evaluate(pop, POP_SIZE, len, fit, eval, W, G,gen);
+		status = evaluate(pop, POP_SIZE, len, fit, eval, W, G,gen, MAX_WEIGHT);
 		
 		if (eval.max > max_fitness) {
 			gen_max_fitness = gen;
@@ -727,7 +717,7 @@ ErrorInfo GA(size_t POP_SIZE,int len,int iters,bool dpx_cross,float crossProb,fl
 	return status;
 }
 
-ErrorInfo GA_bitwise(size_t POP_SIZE, int len, int iters, bool dpx_cross, float crossProb, float mutProb,unsigned long long seed) {
+ErrorInfo GA_bitwise(size_t POP_SIZE, int len, int iters, bool dpx_cross, float crossProb, float mutProb,unsigned long long seed, float MAX_WEIGHT) {
 	if (dpx_cross) printf("DPX "); 
 	else printf("SPX ");
 	printf("bitwise(%u) POP_SIZE=%u length=%d seed=%u\n",sizeof(Data) * 8, POP_SIZE, len, seed);
@@ -778,7 +768,7 @@ ErrorInfo GA_bitwise(size_t POP_SIZE, int len, int iters, bool dpx_cross, float 
 	}
 
 	int gen = 0;
-	status = evaluate_bitwise(pop, POP_SIZE, realLength,len, fit, eval,W,G,gen);
+	status = evaluate_bitwise(pop, POP_SIZE, realLength,len, fit, eval,W,G,gen, MAX_WEIGHT);
 	max_fitness = eval.max;
 
 	for ( gen = 1; gen <= iters; gen++) { // while not optimalSolutionFound
@@ -787,17 +777,28 @@ ErrorInfo GA_bitwise(size_t POP_SIZE, int len, int iters, bool dpx_cross, float 
 		if (status.failed()) return status;
 
 		// elegir POP_SIZE ganadores
-		tournament << < POP_SIZE / MAX_THREADS_PER_BLOCK, MAX_THREADS_PER_BLOCK >> > (fit, tourn, win);
+		tournament << < POP_SIZE / MAX_THREADS_PER_BLOCK, MAX_THREADS_PER_BLOCK >> > (fit, tourn, win,POP_SIZE);
 		status.cuda = cudaGetLastError();
 		if (status.failed()) return status;
 
 		// seleccion
 		if (dpx_cross) {
 			makeRandomNumbersDpx(generator, POP_SIZE, len, probs, points);
-			dpx_b << < POP_SIZE / 2, MAX_THREADS_PER_BLOCK >> >(pop, npop, win, probs, points, realLength, crossProb);
 		}
 		else {
 			makeRandomNumbersSpx(generator, POP_SIZE, len, probs, points);
+		}
+#if KERNEL_TIMING
+		cudaEvent_t startCross, stopCross;
+		cudaEventCreate(&startCross);
+		cudaEventCreate(&stopCross);
+
+		cudaEventRecord(startCross);
+#endif //KERNEL_TIMING
+		if (dpx_cross) {
+			dpx_b << < POP_SIZE / 2, MAX_THREADS_PER_BLOCK >> >(pop, npop, win, probs, points, realLength, crossProb);
+		}
+		else {
 			spx_b << < POP_SIZE / 2, MAX_THREADS_PER_BLOCK >> >(pop, npop, win, probs, points, realLength, crossProb);
 		}
 		status.cuda = cudaGetLastError();
@@ -805,13 +806,20 @@ ErrorInfo GA_bitwise(size_t POP_SIZE, int len, int iters, bool dpx_cross, float 
 
 		status.cuda = cudaDeviceSynchronize();
 		if (status.failed()) return status;
+#if KERNEL_TIMING
+		cudaEventRecord(stopCross);
+		cudaEventSynchronize(stopCross);
+		float milisecs = 0;
+		cudaEventElapsedTime(&milisecs, startCross, stopCross);
+		timeCross += milisecs;
+#endif //KERNEL_TIMING
 
 		// elegir numeros aleatorios para mutacion 
 		// se reusa la memoria que se uso para los numeros aleatorios de la seleccion
 		status = makeRandomNumbersMutation(generator, POP_SIZE, len, probs, points);
 
 		// mutacion
-		mutation_b << < POP_SIZE / MAX_THREADS_PER_BLOCK, MAX_THREADS_PER_BLOCK >> >(npop, probs, points, realLength, FirstBitMask, mutProb);
+		mutation_b << < POP_SIZE / MAX_THREADS_PER_BLOCK, MAX_THREADS_PER_BLOCK >> >(npop, probs, points, realLength, FirstBitMask, mutProb,POP_SIZE);
 		status.cuda = cudaGetLastError();
 		if (status.failed()) return status;
 		status.cuda = cudaDeviceSynchronize();
@@ -820,7 +828,7 @@ ErrorInfo GA_bitwise(size_t POP_SIZE, int len, int iters, bool dpx_cross, float 
 		tmp = pop;
 		pop = npop;
 		npop = tmp;
-		status  = evaluate_bitwise(pop, POP_SIZE, realLength, len, fit, eval, W, G,gen);
+		status  = evaluate_bitwise(pop, POP_SIZE, realLength, len, fit, eval, W, G,gen, MAX_WEIGHT);
 
 		if (eval.max > max_fitness) {
 			gen_max_fitness = gen;
@@ -854,14 +862,18 @@ int main()
 	}
 	std::clock_t c_start = std::clock();
 
+	timeFitness = timeCross = 0;
+
 	// TODO: arreglar para POP_SIZE no multiplo de MAX_THREADS
 	unsigned int POP_SIZE = 2048;
+	float MAX_WEIGHT = 1000; // peso maximo de la mochila
 	int len = 10000;
-	int iters = 10000;
+	int iters = 20000;
 	float pMutacion =0.4;
 	float pCruce = 1;
 	unsigned long long seed = 2825521;
-	GA_bitwise(POP_SIZE, len, iters, true, pCruce,pMutacion,seed);
+	bool use_dpx = false;
+	GA_bitwise(POP_SIZE, len, iters, use_dpx, pCruce,pMutacion,seed, MAX_WEIGHT);
 	std::clock_t c_end = std::clock();
 	double time_elapsed_ms = 1000.0 * (c_end - c_start) / CLOCKS_PER_SEC;
 
@@ -874,6 +886,9 @@ int main()
 		return 1;
 	}
 	printf("Tiempo total: %.3fs\n", time_elapsed_ms / 1000.0);
+#if KERNEL_TIMING
+	printf("Tiempo fitness: %.3fs, Tiempo cross: %.3fs\n", timeFitness / 1000,timeCross /1000);
+#endif //KERNEL_TIMING 
 
 	//std::cout << "Press any key to exit . . .";
 	//std::cin.get();

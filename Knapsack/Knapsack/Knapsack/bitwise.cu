@@ -6,7 +6,7 @@
 
 #define UNROLL
 #define KNAPSACK
-#define SIMULTANEO 1
+#define SIMULTANEO 0
 #define UNBIT 1 
 
 __device__ inline void warpReduce2(volatile float * partial, const unsigned int tid) {
@@ -151,10 +151,10 @@ __global__ void fitness_knapsack_b(Data * pop, float* fit, int length, int realL
 	// calcular valores de ganancia
 
 	for (i = tid;i < length;i = i + MAX_THREADS_PER_BLOCK) {
-		j = tid % DataSize;
-		aux = pop[idx*realLength + i / DataSize];
-		value = (aux >> j) & 1;
-		shift = shift >> 1;
+		int k = i / DataSize;
+		j = (DataSize - 1) - (i - k * DataSize);//i % DataSize;
+		aux = pop[idx*realLength + k];
+		unsigned int value = (aux >> j) & 1;
 		partial_g[tid] = partial_g[tid] + value * G[i];
 	}
 
@@ -583,19 +583,22 @@ __global__ void dpx_b(Data *pop, Data *npop, int *pos, float *randomPC, int *ran
 // MASK: A bit mask of the first bit. MASK = (Data)pow(2.0, (int)DataSize-1)
 // PROB_MUT: mutation probability. 
 
-__global__ void mutation_b(Data *pop, float *randomPM, int *randomPoint, int length, Data mask, float PROB_MUT){
+__global__ void mutation_b(Data *pop, float *randomPM, int *randomPoint, int length, Data mask, float PROB_MUT,size_t POP_SIZE){
 	
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    float pm = randomPM[idx];   // value for mutation
-    int pnt = randomPoint[idx]; // mutation point
-	
-    if (pm <= PROB_MUT) {
-          int word = pnt/DataSize;
-	  int wordPos = pnt % DataSize;
-          Data aux1 = pop[idx*length+word];
-	  Data aux2 = mask >> wordPos;
-	  pop[idx*length+word] = aux1 ^ aux2;
-    }
+	if (idx < POP_SIZE) {
+		float pm = randomPM[idx];   // value for mutation
+		int pnt = randomPoint[idx]; // mutation point
+
+		if (pm <= PROB_MUT) {
+			int word = pnt / DataSize;
+			int wordPos = pnt % DataSize;
+			Data aux1 = pop[idx*length + word];
+			Data aux2 = mask >> wordPos;
+			pop[idx*length + word] = aux1 ^ aux2;
+		}
+	}
+
  
 }
 
@@ -609,19 +612,23 @@ __global__ void mutation_b(Data *pop, float *randomPM, int *randomPoint, int len
 // randomgpu: pointer to global memory that stores the random numbers for the tournament (2*POP_SIZE).
 // winnergpu: pointer to global memory that stores the positions of the winners of the tournaments.
 
-__global__ void tournament_b(float * fit, int * random, int * win) {
+__global__ void tournament_b(float * fit, int * random, int * win,size_t POP_SIZE) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    int nro1 = random[2*idx];
-    int nro2 = random[2*idx+1];
-    int pos;
-    
-    if (fit[nro1] > fit[nro2]) {
-	pos = nro1;
-    } else {
-	pos = nro2;
-    }
+	if (idx < POP_SIZE) {
+		int nro1 = random[2 * idx];
+		int nro2 = random[2 * idx + 1];
+		int pos;
 
-    win[idx] = pos;
+		if (fit[nro1] > fit[nro2]) {
+			pos = nro1;
+		}
+		else {
+			pos = nro2;
+		}
+
+		win[idx] = pos;
+	}
+
 }
 
 

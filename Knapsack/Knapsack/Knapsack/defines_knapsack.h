@@ -3,18 +3,19 @@
 
 #define INIT_THREADS 128
 #define MAX_THREADS_PER_BLOCK 512
-#define MAX_WEIGHT 1000 // peso maximo de la mochila
+
 #define PENAL 1 // valor penalizacion sobrepeso
 #define T_FIT float // tipo de datos de fitness
 
 #define SALIDA 1
 #define SALIDA_STEP 500 // cada cuanto mostrar estadisticas
 #define ORDEN_DPX 1 // forzar pnt2 > pnt 1
+#define KERNEL_TIMING 0
 
 // para bitwise
 // The constant DataSize should be defined as 8 (if Data is unsigned char), 16 (if Data is unsigned short), 
 // 32 (if Data is unsigned int) or 64 (if Data is unsigned long).
-#define DataSize 64
+#define DataSize 32
 
 // The datatype Data should be defined as unsigned char, unsigned short, unsigned int or unsigned long.
 #if DataSize == 8

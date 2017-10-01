@@ -17,15 +17,18 @@
 // CHROM_LEN: length of the chromosome.
 // PROB_MUT: mutation probability. 
 
-__global__ void mutation(bool *pop, float *randomPM, int *randomPoint, int length, float PROB_MUT) {
+__global__ void mutation(bool *pop, float *randomPM, int *randomPoint, int length, float PROB_MUT,size_t POP_SIZE) {
 
 	int idx = blockIdx.x * blockDim.x + threadIdx.x;
-	float pm = randomPM[idx];   // value for mutation
-	int pnt = randomPoint[idx]; // mutation point
+	if (idx < POP_SIZE) {
+		float pm = randomPM[idx];   // value for mutation
+		int pnt = randomPoint[idx]; // mutation point
 
-	if (pm <= PROB_MUT) {
-		pop[idx*length + pnt] = !pop[idx*length + pnt];
+		if (pm <= PROB_MUT) {
+			pop[idx*length + pnt] = !pop[idx*length + pnt];
+		}
 	}
+
 
 }
 
@@ -245,20 +248,22 @@ __global__ void spx(bool *pop, bool *npop, int *pos, float *randomPC, int *rando
 // randomgpu: pointer to global memory that stores the random numbers for the tournament (2*POP_SIZE).
 // winnergpu: pointer to global memory that stores the positions of the winners of the tournaments.
 
-__global__ void tournament(float * fit, int * random, int * win) {
+__global__ void tournament(float * fit, int * random, int * win,size_t POP_SIZE) {
 	int idx = blockIdx.x * blockDim.x + threadIdx.x;
-	int nro1 = random[2 * idx];
-	int nro2 = random[2 * idx + 1];
-	int pos;
+	if (idx < POP_SIZE) {
+		int nro1 = random[2 * idx];
+		int nro2 = random[2 * idx + 1];
+		int pos;
 
-	if (fit[nro1] > fit[nro2]) {
-		pos = nro1;
-	}
-	else {
-		pos = nro2;
-	}
+		if (fit[nro1] > fit[nro2]) {
+			pos = nro1;
+		}
+		else {
+			pos = nro2;
+		}
 
-	win[idx] = pos;
+		win[idx] = pos;
+	}
 }
 
 // inicializa la memoria con numeros aleatorios 8 booleanos contiguos a la vez 
