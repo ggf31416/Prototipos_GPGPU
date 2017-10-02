@@ -6,7 +6,7 @@
 
 #define UNROLL
 #define KNAPSACK
-#define SIMULTANEO 0
+#define SIMULTANEO 1
 #define UNBIT 1 
 
 __device__ inline void warpReduce2(volatile float * partial, const unsigned int tid) {
