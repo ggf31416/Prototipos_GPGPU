@@ -12,6 +12,7 @@
 #include "bitwise.cuh"
 #include <ctime>
 #include <iostream>
+#include <string>
 
 
 #ifdef __INTELLISENSE__
@@ -43,6 +44,9 @@ struct EvalInfo {
 };
 
 float timeFitness, timeCross;
+
+bool KERNEL_TIMING = false;
+int SALIDA_STEP = 500; // cada cuanto mostrar estadisticas
 
 template<typename T>
 __global__ void sumar(T* dev_rnd, float* dev_output,unsigned int len)
@@ -402,7 +406,13 @@ void printInfo(int gen, const EvalInfo& eval) {
 	printf("gen %d: Inval: %d, AvgP: %.2f, MinV: %.0f, AvgV: %.1f, Max: %.0f\n", gen, eval.invalidos, eval.avgPenal, eval.minValido, eval.avgValido, eval.max);
 }
 
+float* mem1;
+void initMemory() {
+	cudaMallocHost(&mem1, sizeof(float));
+}
+
 // evaluate comun
+
 ErrorInfo evaluate_(size_t POP_SIZE, float* dev_fit, EvalInfo& eval,int gen) {
 
 	bool mostrar = (SALIDA && (gen % SALIDA_STEP) == 0);
@@ -432,8 +442,11 @@ ErrorInfo evaluate_(size_t POP_SIZE, float* dev_fit, EvalInfo& eval,int gen) {
 	// hallar maximo (se calcula siempre para conocer mejor iteracion)
 	maximo << <nroBlocks, MAX_THREADS_PER_BLOCK >> >(dev_fit, out1, POP_SIZE);
 	maximo << <1, MAX_THREADS_PER_BLOCK >> >(out1, out1, nroBlocks);
-	cudaMemcpy(&maxFit, out1, sizeof(T_FIT), cudaMemcpyDeviceToHost);
-	eval.max = maxFit;
+	// para copias suficientemente pequeñas no se observo mejor performance en usar memoria pinned
+	cudaMemcpy(&maxFit, out1, sizeof(T_FIT), cudaMemcpyDeviceToHost); //cudaMemcpy(mem1, out1, sizeof(T_FIT), cudaMemcpyDeviceToHost);
+	
+	eval.max = maxFit; 
+	
 
 	// hallar minimo
 	/*minimo << <nroBlocks, MAX_THREADS_PER_BLOCK >> >(dev_fit, out1, POP_SIZE);
@@ -478,24 +491,25 @@ ErrorInfo evaluate_(size_t POP_SIZE, float* dev_fit, EvalInfo& eval,int gen) {
 }
 
 
-ErrorInfo evaluate(bool* pop, size_t POP_SIZE, int length,float* dev_fit,EvalInfo& eval, float* W, float* G,int gen, float MAX_WEIGHT) {
+ErrorInfo evaluate(bool* pop, size_t POP_SIZE, int length, float* dev_fit, EvalInfo& eval, float* W, float* G, int gen, float MAX_WEIGHT) {
 
 	cudaEvent_t startFitness, stopFitness;
-#if KERNEL_TIMING
-	cudaEventCreate(&startFitness);
-	cudaEventCreate(&stopFitness);
+	if (KERNEL_TIMING) {
+		cudaEventCreate(&startFitness);
+		cudaEventCreate(&stopFitness);
 
-	cudaEventRecord(startFitness);
-#endif  // KERNEL_TIMING
+		cudaEventRecord(startFitness);
+	} // KERNEL_TIMING
+
 	fitness_knapsack << < POP_SIZE, MAX_THREADS_PER_BLOCK >> > (pop, dev_fit, length, W, G, MAX_WEIGHT, PENAL);
 	cudaDeviceSynchronize();
-#if KERNEL_TIMING
-	cudaEventRecord(stopFitness);
-	cudaEventSynchronize(stopFitness);
-	float milisecsFitness = 0;
-	cudaEventElapsedTime(&milisecsFitness, startFitness, stopFitness);
-	timeFitness += milisecsFitness;
-#endif  // KERNEL_TIMING
+	if (KERNEL_TIMING) {
+		cudaEventRecord(stopFitness);
+		cudaEventSynchronize(stopFitness);
+		float milisecsFitness = 0;
+		cudaEventElapsedTime(&milisecsFitness, startFitness, stopFitness);
+		timeFitness += milisecsFitness;
+	}  // KERNEL_TIMING
 
 	return evaluate_(POP_SIZE, dev_fit, eval,gen);
 }
@@ -503,22 +517,22 @@ ErrorInfo evaluate(bool* pop, size_t POP_SIZE, int length,float* dev_fit,EvalInf
 
 ErrorInfo evaluate_bitwise(Data* pop, size_t POP_SIZE, int realLength,int length, float* dev_fit, EvalInfo& eval,float* W, float* G,int gen,float MAX_WEIGHT) {
 	cudaEvent_t startFitness, stopFitness;
-#if KERNEL_TIMING
-	cudaEventCreate(&startFitness);
-	cudaEventCreate(&stopFitness);
+	if (KERNEL_TIMING) {
+		cudaEventCreate(&startFitness);
+		cudaEventCreate(&stopFitness);
 
-	cudaEventRecord(startFitness);
-#endif  // KERNEL_TIMING
+		cudaEventRecord(startFitness);
+	}  // KERNEL_TIMING
 	fitness_knapsack_b << < POP_SIZE, MAX_THREADS_PER_BLOCK >> > (pop, dev_fit, length,realLength, FirstBitMask, W, G, MAX_WEIGHT, PENAL);
 	cudaDeviceSynchronize();
-#if KERNEL_TIMING
-	cudaEventRecord(stopFitness);
-	cudaEventSynchronize(stopFitness);
+	if (KERNEL_TIMING) {
+		cudaEventRecord(stopFitness);
+		cudaEventSynchronize(stopFitness);
 
-	float milisecsFitness = 0;
-	cudaEventElapsedTime(&milisecsFitness, startFitness, stopFitness);
-	timeFitness += milisecsFitness;
-#endif
+		float milisecsFitness = 0;
+		cudaEventElapsedTime(&milisecsFitness, startFitness, stopFitness);
+		timeFitness += milisecsFitness;
+	}
 	return evaluate_(POP_SIZE, dev_fit, eval,gen);
 
 }
@@ -666,13 +680,15 @@ ErrorInfo GA(size_t POP_SIZE,int len,int iters,bool dpx_cross,float crossProb,fl
 		else {
 			makeRandomNumbersSpx(generator, POP_SIZE, len, probs, points);
 		}
-#if KERNEL_TIMING
-		cudaEvent_t startCross, stopCross;
-		cudaEventCreate(&startCross);
-		cudaEventCreate(&stopCross);
 
-		cudaEventRecord(startCross);
-#endif // KERNEL_TIMING
+		cudaEvent_t startCross, stopCross;
+		if (KERNEL_TIMING) {
+			cudaEventCreate(&startCross);
+			cudaEventCreate(&stopCross);
+
+			cudaEventRecord(startCross);
+		} 	 // KERNEL_TIMING
+		
 		if (dpx_cross){
 			dpx << < POP_SIZE / 2, MAX_THREADS_PER_BLOCK >> >(pop, npop, win, probs, points, len, crossProb);
 		}
@@ -684,13 +700,14 @@ ErrorInfo GA(size_t POP_SIZE,int len,int iters,bool dpx_cross,float crossProb,fl
 
 		status.cuda = cudaDeviceSynchronize();
 		if (status.failed()) return status;
-#if KERNEL_TIMING
-		cudaEventRecord(stopCross);
-		cudaEventSynchronize(stopCross);
-		float milisecs = 0;
-		cudaEventElapsedTime(&milisecs, startCross, stopCross);
-		timeCross += milisecs;
-#endif // KERNEL_TIMING
+		if (KERNEL_TIMING) {
+			cudaEventRecord(stopCross);
+			cudaEventSynchronize(stopCross);
+			float milisecs = 0;
+			cudaEventElapsedTime(&milisecs, startCross, stopCross);
+			timeCross += milisecs;
+		} // KERNEL_TIMING
+
 
 		// elegir numeros aleatorios para mutacion 
 		// se reusa la memoria que se uso para los numeros aleatorios de la seleccion
@@ -788,13 +805,14 @@ ErrorInfo GA_bitwise(size_t POP_SIZE, int len, int iters, bool dpx_cross, float 
 		else {
 			makeRandomNumbersSpx(generator, POP_SIZE, len, probs, points);
 		}
-#if KERNEL_TIMING
 		cudaEvent_t startCross, stopCross;
-		cudaEventCreate(&startCross);
-		cudaEventCreate(&stopCross);
+		if (KERNEL_TIMING) {
+			
+			cudaEventCreate(&startCross);
+			cudaEventCreate(&stopCross);
 
-		cudaEventRecord(startCross);
-#endif //KERNEL_TIMING
+			cudaEventRecord(startCross);
+		} //KERNEL_TIMING
 		if (dpx_cross) {
 			dpx_b << < POP_SIZE / 2, MAX_THREADS_PER_BLOCK >> >(pop, npop, win, probs, points, realLength, crossProb);
 		}
@@ -806,13 +824,13 @@ ErrorInfo GA_bitwise(size_t POP_SIZE, int len, int iters, bool dpx_cross, float 
 
 		status.cuda = cudaDeviceSynchronize();
 		if (status.failed()) return status;
-#if KERNEL_TIMING
-		cudaEventRecord(stopCross);
-		cudaEventSynchronize(stopCross);
-		float milisecs = 0;
-		cudaEventElapsedTime(&milisecs, startCross, stopCross);
-		timeCross += milisecs;
-#endif //KERNEL_TIMING
+		if (KERNEL_TIMING) {
+			cudaEventRecord(stopCross);
+			cudaEventSynchronize(stopCross);
+			float milisecs = 0;
+			cudaEventElapsedTime(&milisecs, startCross, stopCross);
+			timeCross += milisecs;
+		} //KERNEL_TIMING
 
 		// elegir numeros aleatorios para mutacion 
 		// se reusa la memoria que se uso para los numeros aleatorios de la seleccion
@@ -843,10 +861,68 @@ ErrorInfo GA_bitwise(size_t POP_SIZE, int len, int iters, bool dpx_cross, float 
 
 
 
+void setArgumentsFromCmd(int argc, char** argv,float& pMutacion, float& pCruce, float& MAX_WEIGHT, unsigned int& POP_SIZE,int& length, int& iters, unsigned long long& seed,bool& use_dpx,bool& bitwise) {
+	// valores por defecto
+	POP_SIZE = 2048;
+	length = 10000;
+	iters = 10000;
+	pMutacion = 0.4;
+	pCruce = 1;
+	seed = 2825521;
+	use_dpx = false;
+	bitwise = true;
+
+	bool relativeW = true;
+	float w = 0.1;
+	for (int i = 1; i < argc; i++) {
+		if (strcmp("-k", argv[i]) == 0) {
+			KERNEL_TIMING = true; // -k = Activar KERNEL_TIMING 
+		}
+		if (strcmp("-dpx", argv[i]) == 0) {
+			use_dpx = true;
+		}
+		if (strcmp("-bool", argv[i]) == 0) {
+			bitwise = false;
+		}
+		if (strcmp("-o", argv[i]) == 0) {
+			if (i + 1 < argc) SALIDA_STEP = atoi(argv[i + 1]);
+		}
+		if (strcmp("-m", argv[i]) == 0) {
+			if (i + 1 < argc) pMutacion = (float)(atof(argv[i + 1]) / 100.0); // porcentaje
+		}
+		if (strcmp("-x", argv[i]) == 0) {
+			if (i + 1 < argc) pCruce = (float)(atof(argv[i + 1]) / 100.0);  // porcentaje
+		}
+		if (strcmp("-w", argv[i]) == 0) {
+			if (i + 1 < argc) w = (float)(atof(argv[i + 1]) ); // maximo peso = proporcion de longitud
+		}
+		if (strcmp("-W", argv[i]) == 0) {
+			if (i + 1 < argc) {
+				w = (float)(atof(argv[i + 1])); // maximo peso absoluto (ignora -w)
+				relativeW = false;
+			}
+		}
+		if (strcmp("-len", argv[i]) == 0) {
+			if (i + 1 < argc) length = (atoi(argv[i + 1])); // longitud del individuo
+		}
+		if (strcmp("-p", argv[i]) == 0) {
+			if (i + 1 < argc) POP_SIZE = (unsigned int)(atoi(argv[i + 1])); // longitud del individuo
+		}
+		if (strcmp("-i", argv[i]) == 0) {
+			if (i + 1 < argc) iters = (atoi(argv[i + 1])); // iteraciones
+		}
+		if (strcmp("-s", argv[i]) == 0) {
+			if (i + 1 < argc) seed = (unsigned long long)atoll(argv[i + 1]);
+		}
+
+	}
+	if (relativeW) {
+		MAX_WEIGHT = w * length;
+	}
+}
 
 
-
-int main()
+int main(int argc, char** argv)
 {
 
 
@@ -866,14 +942,22 @@ int main()
 
 	// TODO: arreglar para POP_SIZE no multiplo de MAX_THREADS
 	unsigned int POP_SIZE = 2048;
-	float MAX_WEIGHT = 1000; // peso maximo de la mochila
-	int len = 10000;
-	int iters = 20000;
-	float pMutacion =0.4;
-	float pCruce = 1;
-	unsigned long long seed = 2825521;
-	bool use_dpx = false;
-	GA_bitwise(POP_SIZE, len, iters, use_dpx, pCruce,pMutacion,seed, MAX_WEIGHT);
+	 // peso maximo de la mochila
+	int len,iters ;
+	float MAX_WEIGHT, pMutacion, pCruce;
+	unsigned long long seed ;
+	bool use_dpx,bitwise ;
+
+	setArgumentsFromCmd(argc, argv, pMutacion, pCruce, MAX_WEIGHT, POP_SIZE, len, iters, seed, use_dpx,bitwise);
+
+
+	if (bitwise) {
+		GA_bitwise(POP_SIZE, len, iters, use_dpx, pCruce, pMutacion, seed, MAX_WEIGHT);
+	}
+	else {
+		GA(POP_SIZE, len, iters, use_dpx, pCruce, pMutacion, seed, MAX_WEIGHT);
+	}
+	
 	std::clock_t c_end = std::clock();
 	double time_elapsed_ms = 1000.0 * (c_end - c_start) / CLOCKS_PER_SEC;
 
