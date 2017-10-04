@@ -9,7 +9,7 @@
 
 #define SALIDA 1
 
-#define ORDEN_DPX 0 // forzar pnt2 > pnt 1?
+#define ORDEN_DPX 1 // forzar pnt2 > pnt 1?
 
 // para bitwise
 // The constant DataSize should be defined as 8 (if Data is unsigned char), 16 (if Data is unsigned short), 
