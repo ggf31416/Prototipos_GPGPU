@@ -46,6 +46,7 @@ struct EvalInfo {
 float timeFitness, timeCross;
 
 bool KERNEL_TIMING = false;
+bool UNIT_TEST = false;
 int SALIDA_STEP = 500; // cada cuanto mostrar estadisticas
 
 template<typename T>
@@ -615,12 +616,14 @@ ErrorInfo GA(size_t POP_SIZE,int len,int iters,bool dpx_cross,float crossProb,fl
 	/*cudaEvent_t start, stop;
 	cudaEventCreate(&start);
 	cudaEventCreate(&stop);*/
+
+	int NRO_BLOCKS = (POP_SIZE + MAX_THREADS_PER_BLOCK - 1) / MAX_THREADS_PER_BLOCK;
 	double max_fitness;
 	int gen_max_fitness = 0;
 	if (dpx_cross) printf("DPX ");
 	else printf("SPX ");
 
-	printf("not bitwise POP_SIZE=%u length=%d seed=%u\n", POP_SIZE, len, seed);
+	printf("bool POP_SIZE=%u length=%d seed=%u pCross=%.2f pMut=%.2f\n",  POP_SIZE, len, seed, crossProb, mutProb);
 	ErrorInfo status;
 	bool *pop, *npop;
 	float* fit;
@@ -669,7 +672,7 @@ ErrorInfo GA(size_t POP_SIZE,int len,int iters,bool dpx_cross,float crossProb,fl
 		if (status.failed()) return status;
 
 		// elegir POP_SIZE ganadores
-		tournament<<< POP_SIZE / MAX_THREADS_PER_BLOCK, MAX_THREADS_PER_BLOCK>>> (fit, tourn, win,POP_SIZE);
+		tournament<<< NRO_BLOCKS , MAX_THREADS_PER_BLOCK>>> (fit, tourn, win,POP_SIZE);
 		status.cuda = cudaGetLastError();
 		if (status.failed()) return status;
 
@@ -714,7 +717,7 @@ ErrorInfo GA(size_t POP_SIZE,int len,int iters,bool dpx_cross,float crossProb,fl
 		status = makeRandomNumbersMutation(generator, POP_SIZE, len, probs, points);
 
 		// mutacion
-		mutation << < POP_SIZE / MAX_THREADS_PER_BLOCK, MAX_THREADS_PER_BLOCK >> >(npop, probs, points, len, mutProb,POP_SIZE);
+		mutation << < NRO_BLOCKS, MAX_THREADS_PER_BLOCK >> >(npop, probs, points, len, mutProb,POP_SIZE);
 		status.cuda = cudaGetLastError();
 		if (status.failed()) return status;
 		status.cuda = cudaDeviceSynchronize();
@@ -735,9 +738,11 @@ ErrorInfo GA(size_t POP_SIZE,int len,int iters,bool dpx_cross,float crossProb,fl
 }
 
 ErrorInfo GA_bitwise(size_t POP_SIZE, int len, int iters, bool dpx_cross, float crossProb, float mutProb,unsigned long long seed, float MAX_WEIGHT) {
+
+	int NRO_BLOCKS = (POP_SIZE + MAX_THREADS_PER_BLOCK - 1) / MAX_THREADS_PER_BLOCK;
 	if (dpx_cross) printf("DPX "); 
 	else printf("SPX ");
-	printf("bitwise(%u) POP_SIZE=%u length=%d seed=%u\n",sizeof(Data) * 8, POP_SIZE, len, seed);
+	printf("bitwise(%u) POP_SIZE=%u length=%d seed=%u pCross=%.2f pMut=%.2f\n",sizeof(Data) * 8, POP_SIZE, len, seed,crossProb,mutProb);
 	ErrorInfo status;
 	Data *pop, *npop;
 	float* fit;
@@ -794,7 +799,7 @@ ErrorInfo GA_bitwise(size_t POP_SIZE, int len, int iters, bool dpx_cross, float 
 		if (status.failed()) return status;
 
 		// elegir POP_SIZE ganadores
-		tournament << < POP_SIZE / MAX_THREADS_PER_BLOCK, MAX_THREADS_PER_BLOCK >> > (fit, tourn, win,POP_SIZE);
+		tournament << < NRO_BLOCKS, MAX_THREADS_PER_BLOCK >> > (fit, tourn, win,POP_SIZE);
 		status.cuda = cudaGetLastError();
 		if (status.failed()) return status;
 
@@ -837,7 +842,7 @@ ErrorInfo GA_bitwise(size_t POP_SIZE, int len, int iters, bool dpx_cross, float 
 		status = makeRandomNumbersMutation(generator, POP_SIZE, len, probs, points);
 
 		// mutacion
-		mutation_b << < POP_SIZE / MAX_THREADS_PER_BLOCK, MAX_THREADS_PER_BLOCK >> >(npop, probs, points, realLength, FirstBitMask, mutProb,POP_SIZE);
+		mutation_b << < NRO_BLOCKS, MAX_THREADS_PER_BLOCK >> >(npop, probs, points, realLength, FirstBitMask, mutProb,POP_SIZE);
 		status.cuda = cudaGetLastError();
 		if (status.failed()) return status;
 		status.cuda = cudaDeviceSynchronize();
@@ -881,12 +886,16 @@ void setArgumentsFromCmd(int argc, char** argv,float& pMutacion, float& pCruce, 
 		if (strcmp("-dpx", argv[i]) == 0) {
 			use_dpx = true;
 		}
+		if (strcmp("-u", argv[i]) == 0) {
+			UNIT_TEST = true;
+		}
 		if (strcmp("-bool", argv[i]) == 0) {
 			bitwise = false;
 		}
 		if (strcmp("-o", argv[i]) == 0) {
 			if (i + 1 < argc) SALIDA_STEP = atoi(argv[i + 1]);
 		}
+
 		if (strcmp("-m", argv[i]) == 0) {
 			if (i + 1 < argc) pMutacion = (float)(atof(argv[i + 1]) / 100.0); // porcentaje
 		}
@@ -922,6 +931,209 @@ void setArgumentsFromCmd(int argc, char** argv,float& pMutacion, float& pCruce, 
 }
 
 
+// A utility function that returns maximum of two integers
+int max_(int a, int b) { return (a > b) ? a : b; }
+
+// http://www.geeksforgeeks.org/knapsack-problem/
+// Returns the maximum value that can be put in a knapsack of capacity W
+int knapSack(int W, int wt[], int val[], int n)
+{
+	int i, w;
+	int** K = new int*[n + 1];
+	for (int i = 0; i <= n; i++) {
+		K[i] = new int[W + 1];
+	}
+
+	// Build table K[][] in bottom up manner
+	for (i = 0; i <= n; i++)
+	{
+		for (w = 0; w <= W; w++)
+		{
+			if (i == 0 || w == 0)
+				K[i][w] = 0;
+			else if (wt[i - 1] <= w)
+				K[i][w] = max_(val[i - 1] + K[i - 1][w - wt[i - 1]], K[i - 1][w]);
+			else
+				K[i][w] = K[i - 1][w];
+		}
+	}
+
+	int res =  K[n][W];
+	for (int i = 0; i <= n; i++) {
+		delete[] K[i];
+	}
+	delete[] K;
+	return res;
+}
+
+__global__ void initArrays(int combinations,int len, int realLength, bool* pop_bool, Data* pop_bw,int* pos, float* randomPC,int* randomPoint) {
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+	if (idx < len) {
+		pop_bool[idx] = false;
+		pop_bool[idx + len] = true;
+	}
+	if (idx < realLength) {
+		pop_bw[idx] = 0;
+		pop_bw[idx + realLength] = ~((Data)0);
+	}
+	if (idx < combinations) {
+		randomPC[ idx] = 0;
+		randomPoint[2 * idx] = idx / len;
+		randomPoint[2 * idx + 1] = idx % len;
+		pos[2 * idx] = 0;
+		pos[2 * idx + 1] = 1;
+	}
+}
+
+__global__ void comparar(Data* npop, bool* npop_bool, int* output, int length,int realLength) {
+	Data aux;
+	const int tid = threadIdx.x;
+	__shared__ int intermedio[MAX_THREADS_PER_BLOCK];
+	intermedio[tid] = 0;
+	for (int i = tid;i < length;i = i + MAX_THREADS_PER_BLOCK) {
+		int k = i / DataSize;
+		int j = (DataSize - 1) - i % DataSize;
+
+		aux = npop[blockIdx.x*realLength + k];
+		bool value_bit = ((aux >> j) & 1) != 0;
+		bool value_bool = npop_bool[blockIdx.x * length + i];
+		if (value_bit != value_bool) {
+			intermedio[tid] += 1;
+		}
+	}
+	__syncthreads();
+	for (unsigned int s = blockDim.x / 2; s != 0; s >>= 1) {
+		if (tid < s) {
+			intermedio[tid] =intermedio[tid] + intermedio[tid + s];
+		}
+		__syncthreads();
+	}
+	__syncthreads();
+	if (threadIdx.x == 0) {
+		output[blockIdx.x] = intermedio[0];
+	}
+
+	
+
+}
+#define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
+#define CudaSafeCall( err ) __cudaSafeCall( err, __FILE__, __LINE__ )
+
+inline void __cudaSafeCall(cudaError err, const char *file, const int line)
+{
+	if (cudaSuccess != err)
+	{
+		fprintf(stderr, "cudaSafeCall() failed at %s:%i : %s\n",
+			file, line, cudaGetErrorString(err));
+		exit(-1);
+	}
+
+	return;
+}
+
+inline void __cudaCheckError(const char *file, const int line)
+{
+
+	cudaError err = cudaGetLastError();
+	if (cudaSuccess != err)
+	{
+		fprintf(stderr, "cudaCheckError() failed at %s:%i : %s\n",
+			file, line, cudaGetErrorString(err));
+		exit(-1);
+	}
+
+	// More careful checking. However, this will affect performance.
+	// Comment away if needed.
+	err = cudaDeviceSynchronize();
+	if (cudaSuccess != err)
+	{
+		fprintf(stderr, "cudaCheckError() with sync failed at %s:%i : %s\n",
+			file, line, cudaGetErrorString(err));
+		exit(-1);
+	}
+
+	return;
+}
+
+void PU_DPX() {
+	Data *pop, *npop;
+	bool *pop_bool, *npop_bool;
+
+	Data *host_npop_bw;
+	bool *host_npop_bool;
+	
+	float* randomPC;
+	int *randomPoint, *pos, *output, *host_output;
+
+	int largo = 64;
+	int realLength = ((largo + DataSize - 1) / DataSize);
+	int D = realLength * sizeof(Data);
+	int output_count = 2 * largo * largo;
+	cudaMalloc(&pop, 2 * D );
+	CudaCheckError();
+	cudaMalloc(&npop, output_count * D);
+	CudaCheckError();
+	cudaMalloc(&pop_bool, 2 * largo * sizeof(bool));
+	cudaMalloc(&npop_bool, output_count * largo *  sizeof(bool));
+	CudaCheckError();
+
+	cudaMalloc(&pos, output_count * sizeof(int));
+	CudaCheckError();
+	cudaMalloc(&randomPoint, output_count * sizeof(int));
+	CudaCheckError();
+	cudaMalloc(&randomPC, output_count * sizeof(float));
+	CudaCheckError();
+	cudaMemset(randomPC, 0, output_count * sizeof(float));
+	CudaCheckError();
+
+	cudaMalloc(&output, output_count * sizeof(int));
+	CudaCheckError();
+	cudaMallocHost(&host_output, output_count * sizeof(int));
+	CudaCheckError();
+
+	initArrays<<<largo, largo >>>(largo * largo, largo, realLength, pop_bool,pop, pos,randomPC, randomPoint);
+	CudaCheckError();
+
+	dpx << <output_count /2, MAX_THREADS_PER_BLOCK >> >(pop_bool, npop_bool, pos,randomPC, randomPoint, largo, 1);
+	CudaCheckError();
+	dpx_b << <output_count /2, MAX_THREADS_PER_BLOCK >> >(pop, npop,pos, randomPC, randomPoint, realLength, 1);
+	CudaCheckError();
+	comparar<<<output_count, MAX_THREADS_PER_BLOCK>>>(npop, npop_bool, output, largo, realLength);
+	CudaCheckError();
+	cudaMemcpy(host_output, output, output_count, cudaMemcpyDeviceToHost);
+	CudaCheckError();
+
+	cudaMallocHost(&host_npop_bool, output_count * largo *  sizeof(bool));
+	cudaMallocHost(&host_npop_bw,  output_count * D);
+	cudaMemcpy(host_npop_bool, npop_bool, output_count * largo *  sizeof(bool), cudaMemcpyDeviceToHost);
+	cudaMemcpy(host_npop_bw, npop, output_count * D, cudaMemcpyDeviceToHost);
+
+	for (int i = 0; i < output_count; i++) {
+		if (host_output[i] > 0 | true ) {
+			int pnt1 = (i / 2) / largo;
+			int pnt2 = (i / 2) % largo;
+			printf("%d: %d,%d[%d] -> err=%d\n", i, pnt1, pnt2, i % 2, host_output[i]);
+			printf("bool: ");
+			for (int j = 0; j < largo; j++) {
+				printf("%d", host_npop_bool[i* largo + j] ? 1 : 0);
+			}
+			printf("\n");
+			printf("bw  : ");
+			for (int j = 0; j < largo; j++) {
+				
+				int k1 = j / DataSize;
+				int k2  = (DataSize - 1) - j % DataSize;
+				Data aux  = host_npop_bw[i*realLength + k1];
+				int value = (aux >> k2) & 1;
+				printf("%d", value);
+			}
+			printf("\n");
+		}
+	}
+
+}
+
+
 int main(int argc, char** argv)
 {
 
@@ -936,6 +1148,8 @@ int main(int argc, char** argv)
 	if (cudaStatus != cudaSuccess) {
 		fprintf(stderr, "cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?");
 	}
+
+	
 	std::clock_t c_start = std::clock();
 
 	timeFitness = timeCross = 0;
@@ -950,6 +1164,10 @@ int main(int argc, char** argv)
 
 	setArgumentsFromCmd(argc, argv, pMutacion, pCruce, MAX_WEIGHT, POP_SIZE, len, iters, seed, use_dpx,bitwise);
 
+	if (UNIT_TEST) {
+		PU_DPX();
+		exit(0);
+	}
 
 	if (bitwise) {
 		GA_bitwise(POP_SIZE, len, iters, use_dpx, pCruce, pMutacion, seed, MAX_WEIGHT);
@@ -970,9 +1188,11 @@ int main(int argc, char** argv)
 		return 1;
 	}
 	printf("Tiempo total: %.3fs\n", time_elapsed_ms / 1000.0);
-#if KERNEL_TIMING
-	printf("Tiempo fitness: %.3fs, Tiempo cross: %.3fs\n", timeFitness / 1000,timeCross /1000);
-#endif //KERNEL_TIMING 
+	if (KERNEL_TIMING) {
+		printf("Tiempo fitness: %.3fs, Tiempo cross: %.3fs\n", timeFitness / 1000, timeCross / 1000);
+	}  //KERNEL_TIMING 
+
+
 
 	//std::cout << "Press any key to exit . . .";
 	//std::cin.get();

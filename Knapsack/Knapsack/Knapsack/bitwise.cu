@@ -467,6 +467,9 @@ __global__ void dpx_b(Data *pop, Data *npop, int *pos, float *randomPC, int *ran
 	pnt1 = min(pnt1, pnt2);
 	pnt2 = max(pnt1, pnt2);
 #endif // ORDEN_DPX
+	if (pnt1 == 0 && pnt2 == 1) {
+		printf("");
+	}
 	if (pnt1 == pnt2) {
 		if (pnt1 > 0) pnt1--;
 		else pnt2++;
@@ -553,9 +556,9 @@ __global__ void dpx_b(Data *pop, Data *npop, int *pos, float *randomPC, int *ran
 				}
 				else {
 					//copy word from parent ind2 to child 2*idx	       		    
-					npop[2 * idx*length + i] = pop[ind2*length + i];
+					npop[2 * idx*length + i] = pop[ind1*length + i];
 					//copy word from parent ind1 to child 2*idx + 1
-					npop[(2 * idx + 1)*length + i] = pop[ind1*length + i];
+					npop[(2 * idx + 1)*length + i] = pop[ind2*length + i];
 				}
 			}
 		}
