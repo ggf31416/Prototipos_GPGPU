@@ -555,9 +555,10 @@ __global__ void dpx_b(Data *pop, Data *npop, int *pos, float *randomPC, int *ran
 					}
 				}
 				else {
-					//copy word from parent ind2 to child 2*idx	       		    
+					// ya se pasaron ambos puntos de cruce cuando i == word1 
+					//copy word from parent ind1 to child 2*idx	       		    
 					npop[2 * idx*length + i] = pop[ind1*length + i];
-					//copy word from parent ind1 to child 2*idx + 1
+					//copy word from parent ind2 to child 2*idx + 1
 					npop[(2 * idx + 1)*length + i] = pop[ind2*length + i];
 				}
 			}

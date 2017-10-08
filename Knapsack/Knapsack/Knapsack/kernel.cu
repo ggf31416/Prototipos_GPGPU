@@ -1109,7 +1109,7 @@ void PU_DPX() {
 	cudaMemcpy(host_npop_bw, npop, output_count * D, cudaMemcpyDeviceToHost);
 
 	for (int i = 0; i < output_count; i++) {
-		if (host_output[i] > 0 | true ) {
+		if (host_output[i] > 0  ) {
 			int pnt1 = (i / 2) / largo;
 			int pnt2 = (i / 2) % largo;
 			printf("%d: %d,%d[%d] -> err=%d\n", i, pnt1, pnt2, i % 2, host_output[i]);
