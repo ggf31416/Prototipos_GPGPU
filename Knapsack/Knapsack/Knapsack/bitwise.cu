@@ -513,7 +513,7 @@ __global__ void dpx_b(Data *pop, Data *npop, int *pos, float *randomPC, int *ran
 					// 2do hijo: Los wordPos2 bits superiores son del 1er individuo, mientras que los (DataSize - wordPos2) inferiores son del 2do individuo
 					npop[(2 * idx + 1)*length + i] = ((Data)(pop[ind1*length + i] >> move) << move) | ((Data)(pop[ind2*length + i] << wordPos2) >> wordPos2);
 				}
-				else {
+				else { // caso (i > word1 && i < word2) || (i == word1 && wordPos1 == 0)
 					//copy word from parent ind2 to child 2*idx	       		    
 					npop[2 * idx*length + i] = pop[ind2*length + i];
 					//copy word from parent ind1 to child 2*idx + 1
@@ -539,12 +539,12 @@ __global__ void dpx_b(Data *pop, Data *npop, int *pos, float *randomPC, int *ran
 					// rest2 = (DataSize - wordPos1) bits inferiores del individuo 1
 					Data rest2 = ((Data)(pop[ind1*length + i] << wordPos1) >> wordPos1);
 					if (wordPos1 != 0) {
-						// hijo1: | padre1 (wp1) bits sup | padre 2 (DS - wp1 - wp2) del medio | padre 1 (wp2) bits inferiores |
+						// hijo1: | padre1 (wp1) bits sup | padre 2 (wp2 - wp1) del medio | padre 1 (DS - wp2) bits inferiores |
 						npop[2 * idx*length + i] = ((Data)(pop[ind1*length + i] >> move) << move) | 
 													((Data)(rest1 >> move2) << move2) |
 													((Data)(rest2 << wordPos2) >> wordPos2);
 
-						// hijo2: | padre2 (wp1) bits sup | padre 2 (DS - wp1 - wp2) del medio | padre 1 (DS - wp1 - wp2) bits inferiores |
+						// hijo2: | padre2 (wp1) bits sup | padre 2 (wp2 - wp1) del medio | padre 1 (DS - wp2) bits inferiores |
 						npop[(2 * idx + 1)*length + i] = ((Data)(pop[ind2*length + i] >> move) << move) |
 														((Data)(rest2 >> move2) << move2) |
 														((Data)(rest1 << wordPos2) >> wordPos2);

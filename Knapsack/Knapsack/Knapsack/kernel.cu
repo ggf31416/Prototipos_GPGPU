@@ -48,6 +48,8 @@ float timeFitness, timeCross;
 bool KERNEL_TIMING = false;
 bool UNIT_TEST = false;
 int SALIDA_STEP = 500; // cada cuanto mostrar estadisticas
+bool MAX_DETALLADO = true; // calcular siempre maximo
+bool CALC_MAXFIT = true;
 
 template<typename T>
 __global__ void sumar(T* dev_rnd, float* dev_output,unsigned int len)
@@ -414,7 +416,7 @@ void initMemory() {
 
 // evaluate comun
 
-ErrorInfo evaluate_(size_t POP_SIZE, float* dev_fit, EvalInfo& eval,int gen) {
+ErrorInfo evaluate_(size_t POP_SIZE, float* dev_fit, EvalInfo& eval, int gen) {
 
 	bool mostrar = (SALIDA && (gen % SALIDA_STEP) == 0);
 	ErrorInfo status;
@@ -438,14 +440,16 @@ ErrorInfo evaluate_(size_t POP_SIZE, float* dev_fit, EvalInfo& eval,int gen) {
 	cudaMalloc(&out1, nroBlocks * sizeof(float));
 	cudaMalloc(&out3, STAT_SIZE);
 
-	
 
-	// hallar maximo (se calcula siempre para conocer mejor iteracion)
-	maximo << <nroBlocks, MAX_THREADS_PER_BLOCK >> >(dev_fit, out1, POP_SIZE);
-	maximo << <1, MAX_THREADS_PER_BLOCK >> >(out1, out1, nroBlocks);
-	// para copias suficientemente pequeñas no se observo mejor performance en usar memoria pinned
-	cudaMemcpy(&maxFit, out1, sizeof(T_FIT), cudaMemcpyDeviceToHost); //cudaMemcpy(mem1, out1, sizeof(T_FIT), cudaMemcpyDeviceToHost);
-	
+
+	// hallar maximo (por defecto se calcula siempre para conocer mejor iteracion)
+	if (mostrar | MAX_DETALLADO) {
+		maximo << <nroBlocks, MAX_THREADS_PER_BLOCK >> >(dev_fit, out1, POP_SIZE);
+		maximo << <1, MAX_THREADS_PER_BLOCK >> >(out1, out1, nroBlocks);
+		// para copias suficientemente pequeñas no se observo mejor performance en usar memoria pinned
+		cudaMemcpy(&maxFit, out1, sizeof(T_FIT), cudaMemcpyDeviceToHost); //cudaMemcpy(mem1, out1, sizeof(T_FIT), cudaMemcpyDeviceToHost);
+	}
+
 	eval.max = maxFit; 
 	
 
@@ -872,7 +876,7 @@ void setArgumentsFromCmd(int argc, char** argv,float& pMutacion, float& pCruce, 
 	length = 10000;
 	iters = 10000;
 	pMutacion = 0.4;
-	pCruce = 1;
+	pCruce = 0.9;
 	seed = 2825521;
 	use_dpx = false;
 	bitwise = true;
@@ -888,6 +892,12 @@ void setArgumentsFromCmd(int argc, char** argv,float& pMutacion, float& pCruce, 
 		}
 		if (strcmp("-u", argv[i]) == 0) {
 			UNIT_TEST = true;
+		}
+		if (strcmp("-nomax", argv[i]) == 0) {
+			MAX_DETALLADO = false;
+		}
+		if (strcmp("-noteo", argv[i]) == 0) {
+			CALC_MAXFIT = false;
 		}
 		if (strcmp("-bool", argv[i]) == 0) {
 			bitwise = false;
@@ -963,6 +973,20 @@ int knapSack(int W, int wt[], int val[], int n)
 		delete[] K[i];
 	}
 	delete[] K;
+	return res;
+}
+
+// calcular solucion del problema usando programacion dinamica (en CPU)
+int solveKnapsack(int W, int n) {
+	int* wt = new int[n];
+	int* val = new int[n];
+	for (int i = 0; i < n; i++) {
+		wt[i] = i % 2 + 1;
+		val[i] = i % 10;
+	}
+	int res = knapSack(W, wt, val, n);
+	delete[] wt;
+	delete[] val;
 	return res;
 }
 
@@ -1187,12 +1211,17 @@ int main(int argc, char** argv)
 		fprintf(stderr, "cudaDeviceReset failed!");
 		return 1;
 	}
-	printf("Tiempo total: %.3fs\n", time_elapsed_ms / 1000.0);
+	printf("Tiempo total: %.3fs", time_elapsed_ms / 1000.0);
+	if (CALC_MAXFIT) {
+		int teorico = solveKnapsack((int)MAX_WEIGHT, len);
+		printf(".     Max posible fitness : %i", teorico);
+	}
+	printf("\n");
 	if (KERNEL_TIMING) {
 		printf("Tiempo fitness: %.3fs, Tiempo cross: %.3fs\n", timeFitness / 1000, timeCross / 1000);
 	}  //KERNEL_TIMING 
 
-
+	
 
 	//std::cout << "Press any key to exit . . .";
 	//std::cin.get();

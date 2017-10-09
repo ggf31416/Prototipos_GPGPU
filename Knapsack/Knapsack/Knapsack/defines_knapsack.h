@@ -9,6 +9,7 @@
 
 #define SALIDA 1
 
+
 #define ORDEN_DPX 1 // forzar pnt2 > pnt 1?
 
 // para bitwise
