@@ -153,13 +153,16 @@ copy "$(CudaToolkitBinDir)\cudart*.dll" "$(OutDir)"</Command>
   </ItemDefinitionGroup>
   <ItemGroup>
     <CudaCompile Include="bitwise.cu" />
+    <CudaCompile Include="evaluacion.cu" />
     <CudaCompile Include="notbitwise.cu" />
     <CudaCompile Include="kernel.cu" />
+    <CudaCompile Include="test.cu" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="bitwise.cuh" />
     <ClInclude Include="defines_knapsack.h" />
     <ClInclude Include="ErrorInfo.h" />
+    <ClInclude Include="evaluacion.cuh" />
     <ClInclude Include="notbitwise.cuh" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

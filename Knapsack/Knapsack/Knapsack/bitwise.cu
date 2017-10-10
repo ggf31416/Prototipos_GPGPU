@@ -716,7 +716,7 @@ ErrorInfo generatePOP_device_bitwise(unsigned long seed, size_t POP_SIZE, int le
 	status.cuda = cudaMalloc(npop, N * sizeof(Data));
 	if (status.failed()) return status;
 	
-	initPop_device8_bitwise << < POP_SIZE, INIT_THREADS >> >(*pop, byteLen, len, seed);
+	initPop_device8_bitwise << < (unsigned int)POP_SIZE, INIT_THREADS >> >(*pop, byteLen, len, seed);
 	status.cuda = cudaGetLastError();
 	if (status.failed()) return status;
 

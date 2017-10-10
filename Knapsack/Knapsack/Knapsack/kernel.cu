@@ -13,7 +13,7 @@
 #include <ctime>
 #include <iostream>
 #include <string>
-
+#include "evaluacion.cuh"
 
 #ifdef __INTELLISENSE__
 
@@ -50,177 +50,6 @@ bool UNIT_TEST = false;
 int SALIDA_STEP = 500; // cada cuanto mostrar estadisticas
 bool MAX_DETALLADO = true; // calcular siempre maximo
 bool CALC_MAXFIT = true;
-
-template<typename T>
-__global__ void sumar(T* dev_rnd, float* dev_output,unsigned int len)
-{
-	__shared__ float intermedio[MAX_THREADS_PER_BLOCK];
-	unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
-	unsigned int tid = threadIdx.x;
-	intermedio[threadIdx.x] = idx < len ?  dev_rnd[idx] : 0;
-	__syncthreads();
-	for (unsigned int s = blockDim.x / 2; s != 0; s >>= 1) {
-		if (tid < s) {
-			intermedio[tid] += intermedio[tid + s];
-		}
-		__syncthreads();
-	}
-	__syncthreads();
-	if (threadIdx.x == 0) {
-		dev_output[blockIdx.x] = intermedio[0];
-	}
-}
-
-__global__ void minimo(float* dev_rnd, float* dev_output,unsigned int len)
-{
-	__shared__ float intermedio[MAX_THREADS_PER_BLOCK];
-	unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
-	unsigned int tid = threadIdx.x;
-	intermedio[threadIdx.x] = idx < len ? dev_rnd[idx] : dev_rnd[0];
-	__syncthreads();
-	for (unsigned int s = blockDim.x / 2; s != 0; s >>= 1) {
-		if (tid < s) {
-			intermedio[tid] = min(intermedio[tid], intermedio[tid + s]);
-		}
-		__syncthreads();
-	}
-	__syncthreads();
-	if (threadIdx.x == 0) {
-		dev_output[blockIdx.x] = intermedio[0];
-	}
-}
-
-__global__ void maximo(float* dev_rnd, float* dev_output, unsigned int len)
-{
-	__shared__ float intermedio[MAX_THREADS_PER_BLOCK];
-	unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
-	unsigned int tid = threadIdx.x;
-	intermedio[threadIdx.x] = idx < len ? dev_rnd[idx] : dev_rnd[0];
-	__syncthreads();
-	for (unsigned int s = blockDim.x / 2; s != 0; s >>= 1) {
-		if (tid < s) {
-			intermedio[tid] = max(intermedio[tid], intermedio[tid + s]);
-		}
-		__syncthreads();
-	}
-	__syncthreads();
-	if (threadIdx.x == 0) {
-		dev_output[blockIdx.x] = intermedio[0];
-	}
-}
-
-__global__ void contarInvalidos(float* fitness, float* dev_output, size_t pop_size) {
-	__shared__ float intermedio[MAX_THREADS_PER_BLOCK];
-	unsigned int tid = threadIdx.x;
-	intermedio[tid] = 0;
-	for (int i = tid; i < pop_size; i += MAX_THREADS_PER_BLOCK) {
-		intermedio[tid] += (fitness[i] < 0) ? 1 : 0;
-	}
-	// reduction algorithm to add the partial fitness values
-	__syncthreads();
-	int i = MAX_THREADS_PER_BLOCK / 2;
-	while (i != 0) {
-		if (threadIdx.x < i)
-			intermedio[threadIdx.x] = intermedio[threadIdx.x] + intermedio[threadIdx.x + i];
-		__syncthreads();
-		i = i / 2;
-	}
-
-	// finally thread 0 writes the fitness value in global memory
-	if (threadIdx.x == 0)
-		dev_output[blockIdx.x] = intermedio[0];
-}
-
-__global__ void sumarValidez(float* fitness, float* dev_output, size_t pop_size) {
-	__shared__ float intermedio_val[MAX_THREADS_PER_BLOCK];
-	__shared__ float intermedio_inval[MAX_THREADS_PER_BLOCK];
-	__shared__ float intermedio_cant[MAX_THREADS_PER_BLOCK];
-	unsigned int tid = threadIdx.x;
-	intermedio_val[tid] = 0;
-	intermedio_inval[tid] = 0;
-	intermedio_cant[tid] = 0;
-	for (int i = tid; i < pop_size; i += MAX_THREADS_PER_BLOCK) {
-		if (fitness[i]  >= 0 ) {
-			intermedio_val[tid] +=  fitness[i];
-		}
-		else {
-			intermedio_inval[tid] += fitness[i];
-			intermedio_cant[tid] += 1;
-		}
-		
-	}
-	// reduction algorithm to add the partial fitness values
-	__syncthreads();
-	int i = MAX_THREADS_PER_BLOCK / 2;
-	while (i != 0) {
-		if (threadIdx.x < i)
-			intermedio_val[threadIdx.x] = intermedio_val[threadIdx.x] + intermedio_val[threadIdx.x + i];
-		__syncthreads();
-		i = i / 2;
-	}
-
-	// reduction algorithm to add the partial fitness values
-	__syncthreads();
-	 i = MAX_THREADS_PER_BLOCK / 2;
-	while (i != 0) {
-		if (threadIdx.x < i)
-			intermedio_inval[threadIdx.x] = intermedio_inval[threadIdx.x] + intermedio_inval[threadIdx.x + i];
-		__syncthreads();
-		i = i / 2;
-	}
-
-	// reduction algorithm to add the partial fitness values
-	__syncthreads();
-	 i = MAX_THREADS_PER_BLOCK / 2;
-	while (i != 0) {
-		if (threadIdx.x < i)
-			intermedio_cant[threadIdx.x] = intermedio_cant[threadIdx.x] + intermedio_cant[threadIdx.x + i];
-		__syncthreads();
-		i = i / 2;
-	}
-
-	// finally thread 0 writes the fitness value in global memory
-	if (threadIdx.x == 0) {
-		dev_output[0] = intermedio_cant[0]; // cant invalidos
-		dev_output[1] = intermedio_inval[0]; // suma invalidos 
-		dev_output[2] = intermedio_val[0]; // suma validos
-
-	}
-		
-}
-
-__global__ void minimoValidos(float* fitness, float* dev_output, size_t pop_size) {
-	__shared__ float intermedio[MAX_THREADS_PER_BLOCK];
-	unsigned int tid = threadIdx.x;
-	intermedio[tid] = 0;
-	for (int i = tid; i < pop_size; i += MAX_THREADS_PER_BLOCK) {
-		if (fitness[i] > 0) {
-			intermedio[tid] = intermedio[tid] > 0 ? min(intermedio[tid], fitness[i]) : fitness[i];
-		}
-	}
-	// reduction algorithm to add the partial fitness values
-	__syncthreads();
-	int i = MAX_THREADS_PER_BLOCK / 2;
-	while (i != 0) {
-		if (threadIdx.x < i){
-			if (intermedio[threadIdx.x] > 0 && intermedio[threadIdx.x + i] > 0) {
-				// el menor de los valores > 0
-				intermedio[threadIdx.x] = min(intermedio[threadIdx.x], intermedio[threadIdx.x + i]);
-			}
-			else {
-				// el mayor de los dos valores (el mayor a 0 o 0 si los 2 son 0)
-				intermedio[threadIdx.x] = max(intermedio[threadIdx.x], intermedio[threadIdx.x + i]);
-			}
-			
-		}
-		__syncthreads();
-		i = i / 2;
-	}
-
-	// finally thread 0 writes the fitness value in global memory
-	if (threadIdx.x == 0)
-		dev_output[blockIdx.x] = intermedio[0];
-}
 
 
 
@@ -277,7 +106,7 @@ __global__ void scaleRandomMod(uint32_t* rnd, size_t N, uint32_t max1) {
 
 
 
-ErrorInfo makeRandomIntegers2(curandGenerator_t& generator, int32_t* indices, unsigned int N, unsigned int max) {
+ErrorInfo makeRandomIntegers2(curandGenerator_t& generator, int32_t* indices, size_t N, unsigned int max) {
 	ErrorInfo status;
 	uint32_t* uindices = (uint32_t*)indices; // reinterpreto indices como si fueran unsigned
 	double scale = (double)(max + (1 - 1e-6)) / ((1LL << 32) - 1) ;
@@ -286,7 +115,7 @@ ErrorInfo makeRandomIntegers2(curandGenerator_t& generator, int32_t* indices, un
 	status.cuda = cudaDeviceSynchronize();
 	if (status.failed()) return status;
 
-	unsigned int blocks = (N + MAX_THREADS_PER_BLOCK - 1) / MAX_THREADS_PER_BLOCK; // ceil(N/MAX_THREADS_PER_BLOCK)
+	unsigned int blocks = ((unsigned int)N + MAX_THREADS_PER_BLOCK - 1) / MAX_THREADS_PER_BLOCK; // ceil(N/MAX_THREADS_PER_BLOCK)
 	scaleRandom2 << <blocks, MAX_THREADS_PER_BLOCK >> >( uindices, N, scale);
 	status.cuda = cudaGetLastError();
 	if (status.failed()) return status;
@@ -397,13 +226,6 @@ cudaError_t InitWin(int** dev_win, size_t POP_SIZE) {
 	return cudaMalloc(dev_win, sizeof(int) * POP_SIZE );
 }
 
-int cantInvalidosHost(float* fitness, size_t SIZE) {
-	int total = 0;
-	for (int i = 0; i < SIZE; i++) {
-		total += fitness[i] < 0 ? 1 : 0;
-	}
-	return total;
-}
 
 void printInfo(int gen, const EvalInfo& eval) {
 	printf("gen %d: Inval: %d, AvgP: %.2f, MinV: %.0f, AvgV: %.1f, Max: %.0f\n", gen, eval.invalidos, eval.avgPenal, eval.minValido, eval.avgValido, eval.max);
@@ -420,23 +242,18 @@ ErrorInfo evaluate_(size_t POP_SIZE, float* dev_fit, EvalInfo& eval, int gen) {
 
 	bool mostrar = (SALIDA && (gen % SALIDA_STEP) == 0);
 	ErrorInfo status;
-	float avgFit, avgFitVal, minFitVal;
-	T_FIT minFit, maxFit;
-	float cantInv;
+	float minFitVal; //avgFit, avgFitVal, ,cantInv;
+	T_FIT maxFit;
 	float host_stats[3];
 	size_t STAT_SIZE = sizeof(float) * 3;
-	//cudaMallocHost(&host_stats, STAT_SIZE);
 
 	status.cuda = cudaGetLastError();
 	if (status.failed()) return status;
 
-
-
-
 	float* out1;
 	float* out3;
 
-	int nroBlocks = (POP_SIZE + MAX_THREADS_PER_BLOCK - 1) / (MAX_THREADS_PER_BLOCK);
+	int nroBlocks = ((unsigned int)POP_SIZE + MAX_THREADS_PER_BLOCK - 1) / (MAX_THREADS_PER_BLOCK);
 	cudaMalloc(&out1, nroBlocks * sizeof(float));
 	cudaMalloc(&out3, STAT_SIZE);
 
@@ -444,7 +261,7 @@ ErrorInfo evaluate_(size_t POP_SIZE, float* dev_fit, EvalInfo& eval, int gen) {
 
 	// hallar maximo (por defecto se calcula siempre para conocer mejor iteracion)
 	if (mostrar | MAX_DETALLADO) {
-		maximo << <nroBlocks, MAX_THREADS_PER_BLOCK >> >(dev_fit, out1, POP_SIZE);
+		maximo << <nroBlocks, MAX_THREADS_PER_BLOCK >> >(dev_fit, out1, (unsigned int)POP_SIZE);
 		maximo << <1, MAX_THREADS_PER_BLOCK >> >(out1, out1, nroBlocks);
 		// para copias suficientemente pequeñas no se observo mejor performance en usar memoria pinned
 		cudaMemcpy(&maxFit, out1, sizeof(T_FIT), cudaMemcpyDeviceToHost); //cudaMemcpy(mem1, out1, sizeof(T_FIT), cudaMemcpyDeviceToHost);
@@ -468,7 +285,7 @@ ErrorInfo evaluate_(size_t POP_SIZE, float* dev_fit, EvalInfo& eval, int gen) {
 		// cant invalidos, promedio validos e invalidos
 		sumarValidez << <1, MAX_THREADS_PER_BLOCK >> >(dev_fit, out3, POP_SIZE);
 		cudaMemcpy(&host_stats, out3, STAT_SIZE, cudaMemcpyDeviceToHost);
-		eval.invalidos = host_stats[0];
+		eval.invalidos = (int)host_stats[0];
 		eval.avgPenal = eval.invalidos > 0 ? host_stats[1] / eval.invalidos : 0;
 		eval.avgValido = eval.invalidos < POP_SIZE ? host_stats[2] / (POP_SIZE - eval.invalidos) : 0;
 
@@ -506,7 +323,7 @@ ErrorInfo evaluate(bool* pop, size_t POP_SIZE, int length, float* dev_fit, EvalI
 		cudaEventRecord(startFitness);
 	} // KERNEL_TIMING
 
-	fitness_knapsack << < POP_SIZE, MAX_THREADS_PER_BLOCK >> > (pop, dev_fit, length, W, G, MAX_WEIGHT, PENAL);
+	fitness_knapsack << < (unsigned int)POP_SIZE, MAX_THREADS_PER_BLOCK >> > (pop, dev_fit, length, W, G, MAX_WEIGHT, PENAL);
 	cudaDeviceSynchronize();
 	if (KERNEL_TIMING) {
 		cudaEventRecord(stopFitness);
@@ -528,7 +345,7 @@ ErrorInfo evaluate_bitwise(Data* pop, size_t POP_SIZE, int realLength,int length
 
 		cudaEventRecord(startFitness);
 	}  // KERNEL_TIMING
-	fitness_knapsack_b << < POP_SIZE, MAX_THREADS_PER_BLOCK >> > (pop, dev_fit, length,realLength, FirstBitMask, W, G, MAX_WEIGHT, PENAL);
+	fitness_knapsack_b << < (unsigned int)POP_SIZE, MAX_THREADS_PER_BLOCK >> > (pop, dev_fit, length,realLength, FirstBitMask, W, G, MAX_WEIGHT, PENAL);
 	cudaDeviceSynchronize();
 	if (KERNEL_TIMING) {
 		cudaEventRecord(stopFitness);
@@ -541,52 +358,6 @@ ErrorInfo evaluate_bitwise(Data* pop, size_t POP_SIZE, int realLength,int length
 	return evaluate_(POP_SIZE, dev_fit, eval,gen);
 
 }
-
-
-// Thamas Wang
-// http://www.burtleburtle.net/bob/hash/integer.html
-uint64_t hash64shift(uint64_t key)
-{
-	key = (~key) + (key << 21); // key = (key << 21) - key - 1;
-	key = key ^ (key >>  24);
-	key = (key + (key << 3)) + (key << 8); // key * 265
-	key = key ^ (key >>  14);
-	key = (key + (key << 2)) + (key << 4); // key * 21
-	key = key ^ (key >>  28);
-	key = key + (key << 31);
-	return key;
-}
-
-/*__global__ void initPop_device(bool *pop, unsigned int length,unsigned long long seed) {
-	unsigned int thIdx = blockIdx.x * blockDim.x + threadIdx.x;
-	curandStatePhilox4_32_10_t rndState;
-	curand_init(seed + thIdx, 0ull, 0ull, &rndState);
-	for (unsigned int i = threadIdx.x; i < length; i = i + INIT_THREADS) {
-		unsigned int pos = blockIdx.x * length + i;
-		pop[pos] = (curand_uniform(&rndState) <= 0.5);
-	}
-}*/
-
-
-
-/*__global__ void initPop_device32(bool *pop, unsigned int length, unsigned long long seed) {
-	unsigned int thIdx = blockIdx.x * blockDim.x + threadIdx.x;
-	curandStatePhilox4_32_10_t rndState;
-	curand_init(seed + thIdx, 0ull, 0ull, &rndState);
-	for (unsigned int i = threadIdx.x; i < length; ) {
-		uint32_t rnd = curand(&rndState);
-		for (uint32_t j = 0; j < 32 & i < length; j++, i = i + INIT_THREADS) {
-			unsigned int pos = blockIdx.x * length + i;
-			pop[pos] = (rnd & (1 << j)) != 0;
-		}
-
-	}
-}*/
-
-
-
-
-
 
 
 __global__ void WG_Fijos(float* W, float* G, int len) {
@@ -602,7 +373,7 @@ __global__ void WG_Fijos(float* W, float* G, int len) {
 void inicializarWG(float** W, float** G, int len) {
 	cudaMalloc(W, len * sizeof(float));
 	cudaMalloc(G, len * sizeof(float));
-	int blocks = ceil(len / MAX_THREADS_PER_BLOCK);
+	int blocks = (len  + MAX_THREADS_PER_BLOCK - 1) / MAX_THREADS_PER_BLOCK;
 	WG_Fijos << <blocks, MAX_THREADS_PER_BLOCK >> > (*W, *G, len);
 
 
@@ -621,13 +392,13 @@ ErrorInfo GA(size_t POP_SIZE,int len,int iters,bool dpx_cross,float crossProb,fl
 	cudaEventCreate(&start);
 	cudaEventCreate(&stop);*/
 
-	int NRO_BLOCKS = (POP_SIZE + MAX_THREADS_PER_BLOCK - 1) / MAX_THREADS_PER_BLOCK;
+	unsigned int NRO_BLOCKS = ((unsigned int)POP_SIZE + MAX_THREADS_PER_BLOCK - 1) / MAX_THREADS_PER_BLOCK;
 	double max_fitness;
 	int gen_max_fitness = 0;
 	if (dpx_cross) printf("DPX ");
 	else printf("SPX ");
 
-	printf("bool POP_SIZE=%u length=%d seed=%u pCross=%.2f pMut=%.2f\n",  POP_SIZE, len, seed, crossProb, mutProb);
+	printf("bool POP_SIZE=%u length=%d seed=%llu pCross=%.2f pMut=%.2f\n",  (unsigned int)POP_SIZE, len, seed, crossProb, mutProb);
 	ErrorInfo status;
 	bool *pop, *npop;
 	float* fit;
@@ -651,11 +422,8 @@ ErrorInfo GA(size_t POP_SIZE,int len,int iters,bool dpx_cross,float crossProb,fl
 	status.curand = initGenerator(generator, seed);
 	if (status.failed()) return status;
 
-
-	//status = generatePOP(generator, POP_SIZE, len, &pop,&npop);
 	// usa la curand device API para generar la poblacion sin prealocar numeros aleatorios para eso
 	status = generatePOP_device(seed, POP_SIZE, len, &pop, &npop);
-	//status = generatePOP_device(hash64shift(seed), POP_SIZE, len, &pop, &npop);
 
 	// cambia el offset del generador para que no se sobreponga con el usado para la generacion de la poblacion
 	curandSetGeneratorOffset(generator, POP_SIZE * len);
@@ -743,10 +511,10 @@ ErrorInfo GA(size_t POP_SIZE,int len,int iters,bool dpx_cross,float crossProb,fl
 
 ErrorInfo GA_bitwise(size_t POP_SIZE, int len, int iters, bool dpx_cross, float crossProb, float mutProb,unsigned long long seed, float MAX_WEIGHT) {
 
-	int NRO_BLOCKS = (POP_SIZE + MAX_THREADS_PER_BLOCK - 1) / MAX_THREADS_PER_BLOCK;
+	unsigned int NRO_BLOCKS = ((unsigned int)POP_SIZE + MAX_THREADS_PER_BLOCK - 1) / MAX_THREADS_PER_BLOCK;
 	if (dpx_cross) printf("DPX "); 
 	else printf("SPX ");
-	printf("bitwise(%u) POP_SIZE=%u length=%d seed=%u pCross=%.2f pMut=%.2f\n",sizeof(Data) * 8, POP_SIZE, len, seed,crossProb,mutProb);
+	printf("bitwise(%u) POP_SIZE=%u length=%d seed=%llu pCross=%.2f pMut=%.2f\n",(unsigned int)(sizeof(Data) * 8), (unsigned int)POP_SIZE, len, seed,crossProb,mutProb);
 	ErrorInfo status;
 	Data *pop, *npop;
 	float* fit;
@@ -770,20 +538,12 @@ ErrorInfo GA_bitwise(size_t POP_SIZE, int len, int iters, bool dpx_cross, float 
 	status.cuda = InitTournRandom(&tourn, POP_SIZE);
 	status = initProbs(&probs, &points, POP_SIZE);
 
-
 	curandGenerator_t generator;
 	status.curand = initGenerator(generator, seed);
 	if (status.failed()) return status;
 
-
-	//status = generatePOP(generator, POP_SIZE, len, &pop,&npop);
 	// usa la curand device API para generar la poblacion sin prealocar numeros aleatorios para eso
 	status = generatePOP_device_bitwise(seed, POP_SIZE, len, &pop, &npop);
-
-	//generarAleatorioPacket(generator, realLength * DataSize / 8, (void*)pop);
-	
-
-
 
 	// cambia el offset del generador para que no se sobreponga con el usado para la generacion de la poblacion
 	curandSetGeneratorOffset(generator, POP_SIZE * len);
@@ -875,14 +635,14 @@ void setArgumentsFromCmd(int argc, char** argv,float& pMutacion, float& pCruce, 
 	POP_SIZE = 2048;
 	length = 10000;
 	iters = 10000;
-	pMutacion = 0.4;
-	pCruce = 0.9;
+	pMutacion = 0.4f;
+	pCruce = 0.9f;
 	seed = 2825521;
 	use_dpx = false;
 	bitwise = true;
 
 	bool relativeW = true;
-	float w = 0.1;
+	float w = 0.1f;
 	for (int i = 1; i < argc; i++) {
 		if (strcmp("-k", argv[i]) == 0) {
 			KERNEL_TIMING = true; // -k = Activar KERNEL_TIMING 
@@ -990,172 +750,8 @@ int solveKnapsack(int W, int n) {
 	return res;
 }
 
-__global__ void initArrays(int combinations,int len, int realLength, bool* pop_bool, Data* pop_bw,int* pos, float* randomPC,int* randomPoint) {
-	int idx = blockIdx.x * blockDim.x + threadIdx.x;
-	if (idx < len) {
-		pop_bool[idx] = false;
-		pop_bool[idx + len] = true;
-	}
-	if (idx < realLength) {
-		pop_bw[idx] = 0;
-		pop_bw[idx + realLength] = ~((Data)0);
-	}
-	if (idx < combinations) {
-		randomPC[ idx] = 0;
-		randomPoint[2 * idx] = idx / len;
-		randomPoint[2 * idx + 1] = idx % len;
-		pos[2 * idx] = 0;
-		pos[2 * idx + 1] = 1;
-	}
-}
 
-__global__ void comparar(Data* npop, bool* npop_bool, int* output, int length,int realLength) {
-	Data aux;
-	const int tid = threadIdx.x;
-	__shared__ int intermedio[MAX_THREADS_PER_BLOCK];
-	intermedio[tid] = 0;
-	for (int i = tid;i < length;i = i + MAX_THREADS_PER_BLOCK) {
-		int k = i / DataSize;
-		int j = (DataSize - 1) - i % DataSize;
-
-		aux = npop[blockIdx.x*realLength + k];
-		bool value_bit = ((aux >> j) & 1) != 0;
-		bool value_bool = npop_bool[blockIdx.x * length + i];
-		if (value_bit != value_bool) {
-			intermedio[tid] += 1;
-		}
-	}
-	__syncthreads();
-	for (unsigned int s = blockDim.x / 2; s != 0; s >>= 1) {
-		if (tid < s) {
-			intermedio[tid] =intermedio[tid] + intermedio[tid + s];
-		}
-		__syncthreads();
-	}
-	__syncthreads();
-	if (threadIdx.x == 0) {
-		output[blockIdx.x] = intermedio[0];
-	}
-
-	
-
-}
-#define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
-#define CudaSafeCall( err ) __cudaSafeCall( err, __FILE__, __LINE__ )
-
-inline void __cudaSafeCall(cudaError err, const char *file, const int line)
-{
-	if (cudaSuccess != err)
-	{
-		fprintf(stderr, "cudaSafeCall() failed at %s:%i : %s\n",
-			file, line, cudaGetErrorString(err));
-		exit(-1);
-	}
-
-	return;
-}
-
-inline void __cudaCheckError(const char *file, const int line)
-{
-
-	cudaError err = cudaGetLastError();
-	if (cudaSuccess != err)
-	{
-		fprintf(stderr, "cudaCheckError() failed at %s:%i : %s\n",
-			file, line, cudaGetErrorString(err));
-		exit(-1);
-	}
-
-	// More careful checking. However, this will affect performance.
-	// Comment away if needed.
-	err = cudaDeviceSynchronize();
-	if (cudaSuccess != err)
-	{
-		fprintf(stderr, "cudaCheckError() with sync failed at %s:%i : %s\n",
-			file, line, cudaGetErrorString(err));
-		exit(-1);
-	}
-
-	return;
-}
-
-void PU_DPX() {
-	Data *pop, *npop;
-	bool *pop_bool, *npop_bool;
-
-	Data *host_npop_bw;
-	bool *host_npop_bool;
-	
-	float* randomPC;
-	int *randomPoint, *pos, *output, *host_output;
-
-	int largo = 64;
-	int realLength = ((largo + DataSize - 1) / DataSize);
-	int D = realLength * sizeof(Data);
-	int output_count = 2 * largo * largo;
-	cudaMalloc(&pop, 2 * D );
-	CudaCheckError();
-	cudaMalloc(&npop, output_count * D);
-	CudaCheckError();
-	cudaMalloc(&pop_bool, 2 * largo * sizeof(bool));
-	cudaMalloc(&npop_bool, output_count * largo *  sizeof(bool));
-	CudaCheckError();
-
-	cudaMalloc(&pos, output_count * sizeof(int));
-	CudaCheckError();
-	cudaMalloc(&randomPoint, output_count * sizeof(int));
-	CudaCheckError();
-	cudaMalloc(&randomPC, output_count * sizeof(float));
-	CudaCheckError();
-	cudaMemset(randomPC, 0, output_count * sizeof(float));
-	CudaCheckError();
-
-	cudaMalloc(&output, output_count * sizeof(int));
-	CudaCheckError();
-	cudaMallocHost(&host_output, output_count * sizeof(int));
-	CudaCheckError();
-
-	initArrays<<<largo, largo >>>(largo * largo, largo, realLength, pop_bool,pop, pos,randomPC, randomPoint);
-	CudaCheckError();
-
-	dpx << <output_count /2, MAX_THREADS_PER_BLOCK >> >(pop_bool, npop_bool, pos,randomPC, randomPoint, largo, 1);
-	CudaCheckError();
-	dpx_b << <output_count /2, MAX_THREADS_PER_BLOCK >> >(pop, npop,pos, randomPC, randomPoint, realLength, 1);
-	CudaCheckError();
-	comparar<<<output_count, MAX_THREADS_PER_BLOCK>>>(npop, npop_bool, output, largo, realLength);
-	CudaCheckError();
-	cudaMemcpy(host_output, output, output_count, cudaMemcpyDeviceToHost);
-	CudaCheckError();
-
-	cudaMallocHost(&host_npop_bool, output_count * largo *  sizeof(bool));
-	cudaMallocHost(&host_npop_bw,  output_count * D);
-	cudaMemcpy(host_npop_bool, npop_bool, output_count * largo *  sizeof(bool), cudaMemcpyDeviceToHost);
-	cudaMemcpy(host_npop_bw, npop, output_count * D, cudaMemcpyDeviceToHost);
-
-	for (int i = 0; i < output_count; i++) {
-		if (host_output[i] > 0  ) {
-			int pnt1 = (i / 2) / largo;
-			int pnt2 = (i / 2) % largo;
-			printf("%d: %d,%d[%d] -> err=%d\n", i, pnt1, pnt2, i % 2, host_output[i]);
-			printf("bool: ");
-			for (int j = 0; j < largo; j++) {
-				printf("%d", host_npop_bool[i* largo + j] ? 1 : 0);
-			}
-			printf("\n");
-			printf("bw  : ");
-			for (int j = 0; j < largo; j++) {
-				
-				int k1 = j / DataSize;
-				int k2  = (DataSize - 1) - j % DataSize;
-				Data aux  = host_npop_bw[i*realLength + k1];
-				int value = (aux >> k2) & 1;
-				printf("%d", value);
-			}
-			printf("\n");
-		}
-	}
-
-}
+void PU_DPX(); // test.cu
 
 
 int main(int argc, char** argv)
