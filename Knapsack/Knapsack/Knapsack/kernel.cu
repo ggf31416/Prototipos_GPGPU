@@ -465,10 +465,10 @@ ErrorInfo GA(size_t POP_SIZE,int len,int iters,bool dpx_cross,float crossProb,fl
 		} 	 // KERNEL_TIMING
 		
 		if (dpx_cross){
-			dpx << < POP_SIZE / 2, MAX_THREADS_PER_BLOCK >> >(pop, npop, win, probs, points, len, crossProb);
+			dpx << < (unsigned int)(POP_SIZE / 2), MAX_THREADS_PER_BLOCK >> >(pop, npop, win, probs, points, len, crossProb);
 		}
 		else {
-			spx << < POP_SIZE / 2, MAX_THREADS_PER_BLOCK >> >(pop, npop, win, probs, points, len, crossProb);
+			spx << < (unsigned int)(POP_SIZE / 2), MAX_THREADS_PER_BLOCK >> >(pop, npop, win, probs, points, len, crossProb);
 		}
 		status.cuda = cudaGetLastError();
 		if (status.failed()) return status;
@@ -583,10 +583,10 @@ ErrorInfo GA_bitwise(size_t POP_SIZE, int len, int iters, bool dpx_cross, float 
 			cudaEventRecord(startCross);
 		} //KERNEL_TIMING
 		if (dpx_cross) {
-			dpx_b << < POP_SIZE / 2, MAX_THREADS_PER_BLOCK >> >(pop, npop, win, probs, points, realLength, crossProb);
+			dpx_b << < (unsigned int)(POP_SIZE / 2), MAX_THREADS_PER_BLOCK >> >(pop, npop, win, probs, points, realLength, crossProb);
 		}
 		else {
-			spx_b << < POP_SIZE / 2, MAX_THREADS_PER_BLOCK >> >(pop, npop, win, probs, points, realLength, crossProb);
+			spx_b << < (unsigned int)(POP_SIZE / 2), MAX_THREADS_PER_BLOCK >> >(pop, npop, win, probs, points, realLength, crossProb);
 		}
 		status.cuda = cudaGetLastError();
 		if (status.failed()) return status;
